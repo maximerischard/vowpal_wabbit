@@ -163,7 +163,6 @@ struct vw {
   void* /*ImperativeSearn::searn_struct*/ searnstr;
 
   uint32_t weights_per_problem; //this stores the current number of "weight vector" required by the based learner, which is used to compute offsets when composing reductions
-
   int stdout_fileno;
 
   std::string per_feature_regularizer_input;

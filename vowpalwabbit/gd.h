@@ -28,15 +28,18 @@ void compute_update(example* ec);
 void offset_train(regressor &reg, example* &ec, float update, size_t offset);
 void train_one_example_single_thread(regressor& r, example* ex);
 learner setup(vw& all, po::variables_map& vm);
-//learner setup(vw& all);
 void save_load_regressor(vw& all, io_buf& model_file, bool read, bool text);
 void output_and_account_example(example* ec);
 
  template <void (*T)(vw&, void*, float, uint32_t)>
    void foreach_feature(vw& all, void* dat, feature* begin, feature* end, uint32_t offset=0, float mult=1.)
    {
-     for (feature* f = begin; f!= end; f++)
+     for (feature* f = begin; f!= end; f++) {
+       // cout << "looping over features in the namespace" << endl;
+       // cout << "feature index " << f->weight_index << " with value " << f->x << endl;
+	
        T(all, dat, mult*f->x, f->weight_index + offset);
+     }
    }
  
  template <void (*T)(vw&, void*, float, uint32_t)>
@@ -44,8 +47,11 @@ void output_and_account_example(example* ec);
    {
      uint32_t offset = ec->ft_offset;
 
-     for (unsigned char* i = ec->indices.begin; i != ec->indices.end; i++) 
+     // cout << "In foreach_feature, before the loop over namespaces " << ec->indices.size() << endl;
+     for (unsigned char* i = ec->indices.begin; i != ec->indices.end; i++) {
+	// cout << "In foreach_feature, current namespace" << endl;
        foreach_feature<T>(all, dat, ec->atomics[*i].begin, ec->atomics[*i].end, offset);
+     }
      
      for (vector<string>::iterator i = all.pairs.begin(); i != all.pairs.end();i++) {
        if (ec->atomics[(int)(*i)[0]].size() > 0) {

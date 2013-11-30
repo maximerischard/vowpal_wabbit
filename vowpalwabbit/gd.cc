@@ -228,6 +228,7 @@ void sync_weights(vw& all) {
     return;
   uint32_t length = 1 << all.num_bits;
   size_t stride = all.reg.stride;
+
   for(uint32_t i = 0; i < length && all.reg_mode; i++)
     all.reg.weight_vector[stride*i] = trunc_weight(all.reg.weight_vector[stride*i], (float)all.sd->gravity) * (float)all.sd->contraction;
   all.sd->gravity = 0.;
@@ -442,6 +443,7 @@ template<bool adaptive, bool normalized, bool feature_mask_off>
 inline void simple_norm_compute(vw& all, void* v, float x, uint32_t fi) {
 
   if(feature_mask_off || all.reg.weight_vector[(fi & all.reg.weight_mask)+all.feature_mask_idx]==1.){
+    // cout << "In simple_norm_compute on x = " << x << endl;
     norm_data* nd=(norm_data*)v;
     weight* w = &all.reg.weight_vector[fi & all.reg.weight_mask];
     float x2 = x * x;
@@ -449,11 +451,13 @@ inline void simple_norm_compute(vw& all, void* v, float x, uint32_t fi) {
     float inv_norm = 1.f;
     float inv_norm2 = 1.f;
     if(normalized) {
+      // cout << "In normalized" << endl;
       inv_norm /= w[all.normalized_idx];
       inv_norm2 = inv_norm*inv_norm;
       nd->norm_x += x2 * inv_norm2;
     }
     if(adaptive){
+      // cout << "In adaptive" << endl;
       w[1] += nd->g * x2;
 
 #if defined(__SSE2__) && !defined(VW_LDA_NO_SSE)
@@ -465,9 +469,11 @@ inline void simple_norm_compute(vw& all, void* v, float x, uint32_t fi) {
     t = InvSqrt(w[1]) * inv_norm;
 #endif
     } else {
+      // cout << "Not in adaptive" << endl;
       t *= inv_norm2; //if only using normalized but not adaptive, we're dividing update by feature norm squared
     }
     nd->norm += x2 * t;
+    // cout << "nd->norm" << nd->norm << endl;
   }
 }
 
@@ -503,6 +509,7 @@ float compute_norm(vw& all, example* &ec)
   norm_data nd = {g, 0., 0.};
 
   foreach_feature<T>(all, ec, &nd);
+  // cout << "after foreach feature in compute_norm " << nd.norm << endl;
   
   if(all.normalized_updates) {
     float total_weight = 0;
@@ -517,8 +524,12 @@ float compute_norm(vw& all, example* &ec)
     all.normalized_sum_norm_x += ld->weight * nd.norm_x;
     
     float avg_sq_norm = all.normalized_sum_norm_x / total_weight;
+    // cout << "all.normalized_sum_norm " << all.normalized_sum_norm_x << endl;
     if(all.power_t == 0.5) {
-      if(all.adaptive) nd.norm /= sqrt(avg_sq_norm);
+      if(all.adaptive) { 
+        // cout << "Here, avg_sq_norm " << avg_sq_norm << endl;
+	nd.norm /= sqrt(avg_sq_norm);
+      }
       else nd.norm /= avg_sq_norm;
     } else {
       float power_t_norm = 1.f - (all.adaptive ? all.power_t : 0.f);
@@ -568,6 +579,7 @@ float compute_norm(vw& all, example* &ec)
 	  float norm;
           if(all.adaptive || all.normalized_updates) {
             if(all.power_t == 0.5) {
+
                 if (all.adaptive && all.normalized_updates){
                   if (g.feature_mask_off)
                     norm = compute_norm<simple_norm_compute<true, true, true> >(all,ec);
@@ -581,7 +593,7 @@ float compute_norm(vw& all, example* &ec)
                     norm = compute_norm<simple_norm_compute<true, false, false> >(all,ec);
                 } 
                 else{ 
-                   if (g.feature_mask_off)
+                  if (g.feature_mask_off)
                     norm = compute_norm<simple_norm_compute<false, true, true> >(all,ec);
                   else
                     norm = compute_norm<simple_norm_compute<false, true, false> >(all,ec);
@@ -594,17 +606,21 @@ float compute_norm(vw& all, example* &ec)
                 norm = compute_norm<powert_norm_compute<false> >(all,ec);
             }
           }
-          else 
+          else {
             norm = ec->total_sum_feat_sq;  
+	  }
 
           eta_t = all.eta * norm * ld->weight;
           if(!all.adaptive) eta_t *= powf(t,-all.power_t);
 
+
           float update = 0.f;
-          if( all.invariant_updates )
+          if( all.invariant_updates ) {
             update = all.loss->getUpdate(ec->final_prediction, ld->label, eta_t, norm);
-          else
+	  }
+          else {
             update = all.loss->getUnsafeUpdate(ec->final_prediction, ld->label, eta_t, norm);
+	  }
 
 	  ec->eta_round = (float) (update / all.sd->contraction);
 

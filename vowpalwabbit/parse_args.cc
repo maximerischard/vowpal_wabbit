@@ -26,6 +26,7 @@ license as described in the file LICENSE.
 #include "lda_core.h"
 #include "noop.h"
 #include "gd_mf.h"
+#include "online_tree.h"
 #include "vw.h"
 #include "rand48.h"
 #include "parse_args.h"
@@ -120,6 +121,7 @@ vw* parse_args(int argc, char *argv[])
     ("nn", po::value<size_t>(), "Use sigmoidal feedforward network with <k> hidden units")
     ("noconstant", "Don't add a constant feature")
     ("noop","do no learning")
+    ("online_tree", po::value<float>(), "create an online decision forest")    
     ("oaa", po::value<size_t>(), "Use one-against-all multiclass learning with <k> labels")
     ("ect", po::value<size_t>(), "Use error correcting tournament with <k> labels")
     ("output_feature_regularizer_binary", po::value< string >(&(all->per_feature_regularizer_output)), "Per feature regularization output file")
@@ -276,15 +278,11 @@ vw* parse_args(int argc, char *argv[])
     }
   }
 
-  if (vm.count("bfgs") || vm.count("conjugate_gradient")) 
-    BFGS::setup(*all, to_pass_further, vm, vm_file);
-
   if (vm.count("version") || argc == 1) {
     /* upon direct query for version -- spit it out to stdout */
     cout << version.to_string() << "\n";
     exit(0);
   }
-
 
   if(vm.count("ngram")){
     if(vm.count("sort_features"))
@@ -341,7 +339,6 @@ vw* parse_args(int argc, char *argv[])
     all->p->sort_features = true;
 
   
-
   if (vm.count("quadratic"))
     {
       all->pairs = vm["quadratic"].as< vector<string> >();
@@ -478,6 +475,13 @@ vw* parse_args(int argc, char *argv[])
 	}
     }
 
+  if (vm.count("bfgs") || vm.count("conjugate_gradient")) 
+    BFGS::setup(*all, to_pass_further, vm, vm_file);
+
+  if (vm.count("online_tree") || vm_file.count("online_tree")) {
+    all->l = OT::setup(*all, to_pass_further, vm, vm_file);
+  }
+
   // matrix factorization enabled
   if (all->rank > 0) {
     // store linear + 2*rank weights per index, round up to power of two
@@ -580,6 +584,7 @@ vw* parse_args(int argc, char *argv[])
 	cerr << "decay_learning_rate = " << all->eta_decay_rate << endl;
       if (all->rank > 0)
 	cerr << "rank = " << all->rank << endl;
+
     }
 
   if (vm.count("predictions")) {
