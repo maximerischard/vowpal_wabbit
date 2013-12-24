@@ -17,6 +17,7 @@ license as described in the file LICENSE.
 #include "nn.h"
 #include "oaa.h"
 #include "bs.h"
+#include "topk.h"
 #include "ect.h"
 #include "csoaa.h"
 #include "wap.h"
@@ -53,6 +54,47 @@ bool valid_ns(char c)
     return true;
 }
 
+
+void parse_affix_argument(vw&all, string str) {
+  if (str.length() == 0) return;
+  char*cstr = new char[str.length()+1];
+  strcpy(cstr, str.c_str());
+
+  char*p = strtok(cstr, ",");
+  while (p != 0) {
+    char*q = p;
+    uint16_t prefix = 1;
+    if (q[0] == '+') { q++; }
+    else if (q[0] == '-') { prefix = 0; q++; }
+    if ((q[0] < '1') || (q[0] > '7')) {
+      cerr << "malformed affix argument (length must be 1..7): " << p << endl;
+      throw exception();
+    }
+    uint16_t len = (uint16_t)(q[0] - '0');
+    uint16_t ns = (uint16_t)' ';  // default namespace
+    if (q[1] != 0) {
+      if (valid_ns(q[1]))
+        ns = (uint16_t)q[1];
+      else {      
+        cerr << "malformed affix argument (invalid namespace): " << p << endl;
+        throw exception();
+      }
+      if (q[2] != 0) {
+        cerr << "malformed affix argument (too long): " << p << endl;
+        throw exception();
+      }
+    }
+
+    uint16_t afx = (len << 1) | (prefix & 0x1);
+    all.affix_features[ns] <<= 4;
+    all.affix_features[ns] |=  afx;
+    
+    p = strtok(NULL, ",");
+  }
+  
+  delete cstr;
+}
+
 vw* parse_args(int argc, char *argv[])
 {
   po::options_description desc("VW options");
@@ -61,111 +103,174 @@ vw* parse_args(int argc, char *argv[])
 
   size_t random_seed = 0;
   all->program_name = argv[0];
-  // Declare the supported options.
-  desc.add_options()
-    ("help,h","Look here: http://hunch.net/~vw/ and click on Tutorial.")
-    ("active_learning", "active learning mode")
-    ("active_simulation", "active learning simulation mode")
-    ("active_mellowness", po::value<float>(&(all->active_c0)), "active learning mellowness parameter c_0. Default 8")
+
+  po::options_description in_opt("Input options");
+
+  in_opt.add_options()
+    ("data,d", po::value< string >(), "Example Set")
+    ("ring_size", po::value<size_t>(&(all->p->ring_size)), "size of example ring")
+    ("examples", po::value<size_t>(&(all->max_examples)), "number of examples to parse")
+    ("testonly,t", "Ignore label information and just test")
+    ("daemon", "persistent daemon mode on port 26542")
+    ("port", po::value<size_t>(),"port to listen on")
+    ("num_children", po::value<size_t>(&(all->num_children)), "number of children for persistent daemon mode")
+    ("pid_file", po::value< string >(), "Write pid file in persistent daemon mode")
+    ("passes", po::value<size_t>(&(all->numpasses)),"Number of Training Passes")
+    ("cache,c", "Use a cache.  The default is <data>.cache")
+    ("cache_file", po::value< vector<string> >(), "The location(s) of cache_file.")
+    ("kill_cache,k", "do not reuse existing cache: create a new one always")
+    ("compressed", "use gzip format whenever possible. If a cache file is being created, this option creates a compressed cache file. A mixture of raw-text & compressed inputs are supported with autodetection.")
+    ("no_stdin", "do not default to reading from stdin")
+    ("save_resume", "save extra state so learning can be resumed later with new data")
+    ;
+
+  po::options_description out_opt("Output options");
+
+  out_opt.add_options()
+    ("audit,a", "print weights of features")
+    ("predictions,p", po::value< string >(), "File to output predictions to")
+    ("raw_predictions,r", po::value< string >(),
+     "File to output unnormalized predictions to")
+    ("sendto", po::value< vector<string> >(), "send examples to <host>")
+    ("quiet", "Don't output diagnostics")
     ("binary", "report loss as binary classification on -1,1")
-    ("bs", po::value<size_t>(), "bootstrap mode with k rounds by online importance resampling")
-    ("autolink", po::value<size_t>(), "create link function with polynomial d")
+    ("min_prediction", po::value<float>(&(all->sd->min_label)), "Smallest prediction to output")
+    ("max_prediction", po::value<float>(&(all->sd->max_label)), "Largest prediction to output") 
+    ;
+
+  po::options_description update_opt("Update options");
+  
+  update_opt.add_options()
     ("sgd", "use regular stochastic gradient descent update.")
-    ("adaptive", "use adaptive, individual learning rates.")
+    ("hessian_on", "use second derivative in line search")
+    ("bfgs", "use bfgs optimization")
+    ("mem", po::value<int>(&(all->m)), "memory in bfgs")
+    ("termination", po::value<float>(&(all->rel_threshold)),"Termination threshold")
+    ("adaptive", "use adaptive, individual learning rates.") 
     ("invariant", "use safe/importance aware updates.")
     ("normalized", "use per feature normalized updates")
     ("exact_adaptive_norm", "use current default invariant normalized adaptive update rule")
-    ("audit,a", "print weights of features")
-    ("bit_precision,b", po::value<size_t>(), "number of bits in the feature table")
-    ("bfgs", "use bfgs optimization")
-    ("cache,c", "Use a cache.  The default is <data>.cache")
-    ("cache_file", po::value< vector<string> >(), "The location(s) of cache_file.")
-    ("compressed", "use gzip format whenever possible. If a cache file is being created, this option creates a compressed cache file. A mixture of raw-text & compressed inputs are supported with autodetection.")
-    ("no_stdin", "do not default to reading from stdin")
     ("conjugate_gradient", "use conjugate gradient based optimization")
-    ("csoaa", po::value<size_t>(), "Use one-against-all multiclass learning with <k> costs")
-    ("wap", po::value<size_t>(), "Use weighted all-pairs multiclass learning with <k> costs")
-    ("csoaa_ldf", po::value<string>(), "Use one-against-all multiclass learning with label dependent features.  Specify singleline or multiline.")
-    ("wap_ldf", po::value<string>(), "Use weighted all-pairs multiclass learning with label dependent features.  Specify singleline or multiline.")
-    ("cb", po::value<size_t>(), "Use contextual bandit learning with <k> costs")
     ("l1", po::value<float>(&(all->l1_lambda)), "l_1 lambda")
     ("l2", po::value<float>(&(all->l2_lambda)), "l_2 lambda")
-    ("data,d", po::value< string >(), "Example Set")
-    ("daemon", "persistent daemon mode on port 26542")
-    ("num_children", po::value<size_t>(&(all->num_children)), "number of children for persistent daemon mode")
-    ("pid_file", po::value< string >(), "Write pid file in persistent daemon mode")
+    ("learning_rate,l", po::value<float>(&(all->eta)), "Set Learning Rate")
+    ("loss_function", po::value<string>()->default_value("squared"), "Specify the loss function to be used, uses squared by default. Currently available ones are squared, classic, hinge, logistic and quantile.")
+    ("quantile_tau", po::value<float>()->default_value(0.5), "Parameter \\tau associated with Quantile loss. Defaults to 0.5")
+    ("power_t", po::value<float>(&(all->power_t)), "t power value")
     ("decay_learning_rate",    po::value<float>(&(all->eta_decay_rate)),
      "Set Decay factor for learning_rate between passes")
-    ("input_feature_regularizer", po::value< string >(&(all->per_feature_regularizer_input)), "Per feature regularization input file")
-    ("final_regressor,f", po::value< string >(), "Final regressor")
-    ("readable_model", po::value< string >(), "Output human-readable final regressor with numeric features")
-    ("invert_hash", po::value< string >(), "Output human-readable final regressor with feature names")
-    ("hash", po::value< string > (), "how to hash the features. Available options: strings, all")
-    ("hessian_on", "use second derivative in line search")
-    ("holdout_off", "no holdout data in multiple passes")
-    ("holdout_period", po::value<uint32_t>(&(all->holdout_period)), "holdout period for test only, default 10")
-    ("version","Version information")
-    ("ignore", po::value< vector<unsigned char> >(), "ignore namespaces beginning with character <arg>")
-    ("keep", po::value< vector<unsigned char> >(), "keep namespaces beginning with character <arg>")
-    ("kill_cache,k", "do not reuse existing cache: create a new one always")
-    ("initial_weight", po::value<float>(&(all->initial_weight)), "Set all weights to an initial value of 1.")
-    ("initial_regressor,i", po::value< vector<string> >(), "Initial regressor(s)")
-    ("feature_mask", po::value< string >(), "Use existing regressor to determine which parameters may be updated")
     ("initial_pass_length", po::value<size_t>(&(all->pass_length)), "initial number of examples per pass")
     ("initial_t", po::value<double>(&((all->sd->t))), "initial t value")
-    ("lda", po::value<size_t>(&(all->lda)), "Run lda with <int> topics")
-    ("span_server", po::value<string>(&(all->span_server)), "Location of server for setting up spanning tree")
-    ("min_prediction", po::value<float>(&(all->sd->min_label)), "Smallest prediction to output")
-    ("max_prediction", po::value<float>(&(all->sd->max_label)), "Largest prediction to output")
-    ("mem", po::value<int>(&(all->m)), "memory in bfgs")
-    ("nn", po::value<size_t>(), "Use sigmoidal feedforward network with <k> hidden units")
-    ("noconstant", "Don't add a constant feature")
-    ("noop","do no learning")
-    ("online_tree", po::value<float>(), "create an online decision forest")    
-    ("oaa", po::value<size_t>(), "Use one-against-all multiclass learning with <k> labels")
-    ("ect", po::value<size_t>(), "Use error correcting tournament with <k> labels")
+    ("feature_mask", po::value< string >(), "Use existing regressor to determine which parameters may be updated.  If no initial_regressor given, also used for initial weights.")
+    ;
+
+  po::options_description weight_opt("Weight options");
+
+  weight_opt.add_options()
+    ("bit_precision,b", po::value<size_t>(), "number of bits in the feature table")
+    ("initial_regressor,i", po::value< vector<string> >(), "Initial regressor(s)")
+    ("final_regressor,f", po::value< string >(), "Final regressor")
+    ("initial_weight", po::value<float>(&(all->initial_weight)), "Set all weights to an initial value of 1.")
+    ("random_weights", po::value<bool>(&(all->random_weights)), "make initial weights random")
+    ("readable_model", po::value< string >(), "Output human-readable final regressor with numeric features")
+    ("invert_hash", po::value< string >(), "Output human-readable final regressor with feature names")
+    ("save_per_pass", "Save the model after every pass over data")
+    ("input_feature_regularizer", po::value< string >(&(all->per_feature_regularizer_input)), "Per feature regularization input file")
     ("output_feature_regularizer_binary", po::value< string >(&(all->per_feature_regularizer_output)), "Per feature regularization output file")
     ("output_feature_regularizer_text", po::value< string >(&(all->per_feature_regularizer_text)), "Per feature regularization output file, in text")
-    ("port", po::value<size_t>(),"port to listen on")
-    ("power_t", po::value<float>(&(all->power_t)), "t power value")
-    ("learning_rate,l", po::value<float>(&(all->eta)), "Set Learning Rate")
-    ("passes", po::value<size_t>(&(all->numpasses)),"Number of Training Passes")
-    ("termination", po::value<float>(&(all->rel_threshold)),"Termination threshold")
-    ("predictions,p", po::value< string >(), "File to output predictions to")
+    ;
+
+  po::options_description holdout_opt("Holdout options");
+  holdout_opt.add_options()
+    ("holdout_off", "no holdout data in multiple passes")
+    ("holdout_period", po::value<uint32_t>(&(all->holdout_period)), "holdout period for test only, default 10")
+    ("holdout_after", po::value<uint32_t>(&(all->holdout_after)), "holdout after n training examples, default off (disables holdout_period)")
+    ("early_terminate", po::value<size_t>(), "Specify the number of passes tolerated when holdout loss doesn't decrease before early termination, default is 3")
+    ;
+
+  po::options_description namespace_opt("Feature namespace options");
+  namespace_opt.add_options()
+    ("hash", po::value< string > (), "how to hash the features. Available options: strings, all")
+    ("ignore", po::value< vector<unsigned char> >(), "ignore namespaces beginning with character <arg>")
+    ("keep", po::value< vector<unsigned char> >(), "keep namespaces beginning with character <arg>")
+    ("noconstant", "Don't add a constant feature")
+    ("sort_features", "turn this on to disregard order in which features have been defined. This will lead to smaller cache sizes")
+    ("ngram", po::value< vector<string> >(), "Generate N grams")
+    ("skips", po::value< vector<string> >(), "Generate skips in N grams. This in conjunction with the ngram tag can be used to generate generalized n-skip-k-gram.")
+    ("affix", po::value<string>(), "generate prefixes/suffixes of features; argument '+2a,-3b,+1' means generate 2-char prefixes for namespace a, 3-char suffixes for b and 1 char prefixes for default namespace")
+    ("spelling", po::value< vector<string> >(), "compute spelling features for a give namespace (use '_' for default namespace)");
+    ;
+
+  po::options_description mf_opt("Matrix factorization options");
+  mf_opt.add_options()
     ("quadratic,q", po::value< vector<string> > (),
      "Create and use quadratic features")
     ("q:", po::value< string >(), ": corresponds to a wildcard for all printable characters")
     ("cubic", po::value< vector<string> > (),
      "Create and use cubic features")
-    ("quiet", "Don't output diagnostics")
     ("rank", po::value<uint32_t>(&(all->rank)), "rank for matrix factorization.")
-    ("random_weights", po::value<bool>(&(all->random_weights)), "make initial weights random")
-    ("random_seed", po::value<size_t>(&random_seed), "seed random number generator")
-    ("raw_predictions,r", po::value< string >(),
-     "File to output unnormalized predictions to")
-    ("ring_size", po::value<size_t>(&(all->p->ring_size)), "size of example ring")
-	("examples", po::value<size_t>(&(all->max_examples)), "number of examples to parse")
-    ("save_per_pass", "Save the model after every pass over data")
-    ("early_terminate", po::value<size_t>(), "Specify the number of passes tolerated when holdout loss doesn't decrease before early termination, default is 3")
-    ("save_resume", "save extra state so learning can be resumed later with new data")
-    ("sendto", po::value< vector<string> >(), "send examples to <host>")
-    ("searn", po::value<size_t>(), "use searn, argument=maximum action id")
-    ("searnimp", po::value<size_t>(), "use searn, argument=maximum action id or 0 for LDF")
-    ("testonly,t", "Ignore label information and just test")
-    ("loss_function", po::value<string>()->default_value("squared"), "Specify the loss function to be used, uses squared by default. Currently available ones are squared, classic, hinge, logistic and quantile.")
-    ("quantile_tau", po::value<float>()->default_value(0.5), "Parameter \\tau associated with Quantile loss. Defaults to 0.5")
+    ;
 
+  po::options_description multiclass_opt("Multiclass options");
+  multiclass_opt.add_options()
+    ("oaa", po::value<size_t>(), "Use one-against-all multiclass learning with <k> labels")
+    ("ect", po::value<size_t>(), "Use error correcting tournament with <k> labels")
+    ("csoaa", po::value<size_t>(), "Use one-against-all multiclass learning with <k> costs")
+    ("wap", po::value<size_t>(), "Use weighted all-pairs multiclass learning with <k> costs")
+    ("csoaa_ldf", po::value<string>(), "Use one-against-all multiclass learning with label dependent features.  Specify singleline or multiline.")
+    ("wap_ldf", po::value<string>(), "Use weighted all-pairs multiclass learning with label dependent features.  Specify singleline or multiline.")
+    ;
+
+  po::options_description active_opt("Active Learning options");
+  active_opt.add_options()
+    ("active_learning", "active learning mode")
+    ("active_simulation", "active learning simulation mode")
+    ("active_mellowness", po::value<float>(&(all->active_c0)), "active learning mellowness parameter c_0. Default 8")
+    ;
+
+  po::options_description cluster_opt("Parallelization options");
+  cluster_opt.add_options()
+    ("span_server", po::value<string>(&(all->span_server)), "Location of server for setting up spanning tree")
     ("unique_id", po::value<size_t>(&(all->unique_id)),"unique id used for cluster parallel jobs")
     ("total", po::value<size_t>(&(all->total)),"total number of nodes used in cluster parallel job")    
-    ("node", po::value<size_t>(&(all->node)),"node number in cluster parallel job")    
+    ("node", po::value<size_t>(&(all->node)),"node number in cluster parallel job")
+    ;
 
-    ("sort_features", "turn this on to disregard order in which features have been defined. This will lead to smaller cache sizes")
-    ("ngram", po::value< vector<string> >(), "Generate N grams")
-    ("skips", po::value< vector<string> >(), "Generate skips in N grams. This in conjunction with the ngram tag can be used to generate generalized n-skip-k-gram.");
+  po::options_description other_opt("Other options");
+  other_opt.add_options()
+    ("bs", po::value<size_t>(), "bootstrap mode with k rounds by online importance resampling")
+    ("top", po::value<size_t>(), "top k recommendation")
+    ("bs_type", po::value<string>(), "bootstrap mode - currently 'mean' or 'vote'")
+    ("autolink", po::value<size_t>(), "create link function with polynomial d")
+    ("cb", po::value<size_t>(), "Use contextual bandit learning with <k> costs")
+    ("lda", po::value<size_t>(&(all->lda)), "Run lda with <int> topics")
+    ("nn", po::value<size_t>(), "Use sigmoidal feedforward network with <k> hidden units")
+    ("online_tree", po::value<float>(), "create an online decision forest")    
+    ("searn", po::value<size_t>(), "use searn, argument=maximum action id or 0 for LDF")
+    ;
+
+  // Declare the supported options.
+  desc.add_options()
+    ("help,h","Look here: http://hunch.net/~vw/ and click on Tutorial.")
+    ("version","Version information")
+    ("random_seed", po::value<size_t>(&random_seed), "seed random number generator")
+    ("noop","do no learning")										     ;
 
   //po::positional_options_description p;
   // Be friendly: if -d was left out, treat positional param as data file
   //p.add("data", -1);
+
+  desc.add(in_opt)
+    .add(out_opt)
+    .add(update_opt)
+    .add(weight_opt)
+    .add(holdout_opt)
+    .add(namespace_opt)
+    .add(mf_opt)
+    .add(multiclass_opt)
+    .add(active_opt)
+    .add(cluster_opt)
+    .add(other_opt);
 
   po::variables_map vm = po::variables_map();
   po::variables_map vm_file = po::variables_map(); //separate variable map for storing flags in regressor file
@@ -187,6 +292,12 @@ vw* parse_args(int argc, char *argv[])
 
   if(vm.count("holdout_off"))
       all->holdout_set_off = true;
+
+  if(!all->holdout_set_off && (vm.count("output_feature_regularizer_binary") || vm.count("output_feature_regularizer_text")))
+  {
+      all->holdout_set_off = true;
+      cerr<<"Making holdout_set_off=true since output regularizer specified\n";
+  }   
 
   all->data_filename = "";
 
@@ -240,9 +351,6 @@ vw* parse_args(int argc, char *argv[])
       throw exception();
     }
 
-  all->l = GD::setup(*all, vm);
-  all->scorer = all->l;
-
   all->reg.stride = 4; //use stride of 4 for default invariant normalized adaptive updates
   //if we are doing matrix factorization, or user specified anything in sgd,adaptive,invariant,normalized, we turn off default update rules and use whatever user specified
   if( all->rank > 0 || !all->training || ( ( vm.count("sgd") || vm.count("adaptive") || vm.count("invariant") || vm.count("normalized") ) && !vm.count("exact_adaptive_norm")) )
@@ -278,6 +386,12 @@ vw* parse_args(int argc, char *argv[])
     }
   }
 
+  all->l = GD::setup(*all, vm);
+  all->scorer = all->l;
+
+  if (vm.count("bfgs") || vm.count("conjugate_gradient")) 
+    all->l = BFGS::setup(*all, to_pass_further, vm, vm_file);
+
   if (vm.count("version") || argc == 1) {
     /* upon direct query for version -- spit it out to stdout */
     cout << version.to_string() << "\n";
@@ -306,6 +420,18 @@ vw* parse_args(int argc, char *argv[])
       all->skip_strings = vm["skips"].as<vector<string> >();
       compile_gram(all->skip_strings, all->skips, (char*)"skips", all->quiet);
     }
+
+  if (vm.count("affix")) {
+    parse_affix_argument(*all, vm["affix"].as<string>());
+  }
+
+  if (vm.count("spelling")) {
+    vector<string> spelling_ns = vm["spelling"].as< vector<string> >();
+    for (size_t id=0; id<spelling_ns.size(); id++)
+      if (spelling_ns[id][0] == '_') all->spelling_features[' '] = true;
+      else all->spelling_features[(size_t)spelling_ns[id][0]] = true;
+  }
+  
   if (vm.count("bit_precision"))
     {
       all->default_bits = false;
@@ -338,7 +464,6 @@ vw* parse_args(int argc, char *argv[])
   if(vm.count("sort_features"))
     all->p->sort_features = true;
 
-  
   if (vm.count("quadratic"))
     {
       all->pairs = vm["quadratic"].as< vector<string> >();
@@ -561,7 +686,6 @@ vw* parse_args(int argc, char *argv[])
   if(vm.count("quantile_tau"))
     loss_parameter = vm["quantile_tau"].as<float>();
 
-  all->is_noop = false;
   if (vm.count("noop")) 
     all->l = NOOP::setup(*all);
   
@@ -637,11 +761,25 @@ vw* parse_args(int argc, char *argv[])
   if (vm.count("sendto"))
     all->l = SENDER::setup(*all, vm, all->pairs);
 
-  // load rest of regressor
-  all->l.save_load(io_temp, true, false);
-  io_temp.close_file();
-  //load the mask model, might be different from -i
-  parse_mask_regressor_args(*all, vm);
+  // Need to see if we have to load feature mask first or second.
+  // -i and -mask are from same file, load -i file first so mask can use it
+  if (vm.count("feature_mask") && vm.count("initial_regressor")
+      && vm["feature_mask"].as<string>() == vm["initial_regressor"].as< vector<string> >()[0]) {
+    // load rest of regressor
+    all->l->save_load(io_temp, true, false);
+    io_temp.close_file();
+
+    // set the mask, which will reuse -i file we just loaded
+    parse_mask_regressor_args(*all, vm);
+  }
+  else {
+    // load mask first
+    parse_mask_regressor_args(*all, vm);
+
+    // load rest of regressor
+    all->l->save_load(io_temp, true, false);
+    io_temp.close_file();
+  }
 
   if (all->l1_lambda < 0.) {
     cerr << "l1_lambda should be nonnegative: resetting from " << all->l1_lambda << " to 0" << endl;
@@ -655,7 +793,7 @@ vw* parse_args(int argc, char *argv[])
   all->reg_mode += (all->l2_lambda > 0.) ? 2 : 0;
   if (!all->quiet)
     {
-      if (all->reg_mode %2)
+      if (all->reg_mode %2 && !vm.count("bfgs"))
 	cerr << "using l1 regularization = " << all->l1_lambda << endl;
       if (all->reg_mode > 1)
 	cerr << "using l2 regularization = " << all->l2_lambda << endl;
@@ -668,8 +806,11 @@ vw* parse_args(int argc, char *argv[])
   if(vm.count("nn") || vm_file.count("nn") ) 
     all->l = NN::setup(*all, to_pass_further, vm, vm_file);
 
-  if(vm.count("autolink") || vm_file.count("autolinnk") ) 
+  if(vm.count("autolink") || vm_file.count("autolink") ) 
     all->l = ALINK::setup(*all, to_pass_further, vm, vm_file);
+
+  if(vm.count("top") || vm_file.count("top") ) 
+    all->l = TOPK::setup(*all, to_pass_further, vm, vm_file);
   
   if (vm.count("binary") || vm_file.count("binary"))
     all->l = BINARY::setup(*all, to_pass_further, vm, vm_file);
@@ -730,11 +871,8 @@ vw* parse_args(int argc, char *argv[])
     got_cb = true;
   }
 
+  all->searnstr = NULL;
   if (vm.count("searn") || vm_file.count("searn") ) { 
-    if (vm.count("searnimp") || vm_file.count("searnimp")) {
-      cerr << "fail: cannot have both --searn and --searnimp" << endl;
-      throw exception();
-    }
     if (!got_cs && !got_cb) {
       if( vm_file.count("searn") ) vm.insert(pair<string,po::variable_value>(string("csoaa"),vm_file["searn"]));
       else vm.insert(pair<string,po::variable_value>(string("csoaa"),vm["searn"]));
@@ -742,19 +880,8 @@ vw* parse_args(int argc, char *argv[])
       all->l = CSOAA::setup(*all, to_pass_further, vm, vm_file);  // default to CSOAA unless others have been specified
       got_cs = true;
     }
+    all->searnstr = (Searn::searn*)calloc(1, sizeof(Searn::searn));
     all->l = Searn::setup(*all, to_pass_further, vm, vm_file);
-  }
-
-  if (vm.count("searnimp") || vm_file.count("searnimp") ) { 
-    if (!got_cs && !got_cb) {
-      if( vm_file.count("searnimp") ) vm.insert(pair<string,po::variable_value>(string("csoaa"),vm_file["searnimp"]));
-      else vm.insert(pair<string,po::variable_value>(string("csoaa"),vm["searnimp"]));
-      
-      all->l = CSOAA::setup(*all, to_pass_further, vm, vm_file);  // default to CSOAA unless others have been specified
-      got_cs = true;
-    }
-    all->searnstr = (ImperativeSearn::searn*)calloc(1, sizeof(ImperativeSearn::searn));
-    all->l = ImperativeSearn::setup(*all, to_pass_further, vm, vm_file);
   }
 
   if (got_cb && got_mc) {
@@ -798,11 +925,12 @@ vw* parse_args(int argc, char *argv[])
 
   parse_source_args(*all, vm, all->quiet,all->numpasses);
 
-  // force stride * weights_per_problem to be divisible by 2 to avoid 32-bit overflow
+  // force stride * weights_per_problem to be a power of 2 to avoid 32-bit overflow
   uint32_t i = 0;
-  while (all->reg.stride * all->weights_per_problem  > (uint32_t)(1 << i))
+  size_t params_per_problem = all->l->increment * all->l->weights;
+  while (params_per_problem > (uint32_t)(1 << i))
     i++;
-  all->weights_per_problem = (1 << i) / all->reg.stride;
+  all->wpp = (1 << i) / all->reg.stride;
 
   return all;
 }
@@ -883,10 +1011,9 @@ namespace VW {
   void finish(vw& all)
   {
     finalize_regressor(all, all.final_regressor_name);
-    all.l.finish();
+    all.l->finish();
     if (all.reg.weight_vector != NULL)
       free(all.reg.weight_vector);
-    if (all.searnstr != NULL) free(all.searnstr);
     free_parser(all);
     finalize_source(all.p);
     free(all.p->lp);

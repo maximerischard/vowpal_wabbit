@@ -17,20 +17,16 @@ license as described in the file LICENSE.
 namespace CB
 {
   struct cb {
-    uint32_t increment;
     size_t cb_type;
     CSOAA::label cb_cs_ld; 
     float avg_loss_regressors;
     size_t nb_ex_regressors;
     float last_pred_reg;
     float last_correct_cost;
-    bool first_print_call;
 
     float min_cost;
     float max_cost;
 
-    learner base;
-    
     cb_class* known_cost;
     vw* all;
   };
@@ -283,18 +279,14 @@ namespace CB
 
   void call_scorer(vw& all, cb& c, example* ec, uint32_t index)
   {
-    uint32_t desired_increment = c.increment * (2*index-1);
-   
     float old_min = all.sd->min_label;
     //all.sd->min_label = c.min_cost;
     float old_max = all.sd->max_label;
     //all.sd->max_label = c.max_cost;
-    update_example_indicies(all.audit, ec, desired_increment);
-    all.scorer.learn(ec);
+    all.scorer->learn(ec, 2*(index)-1);
     all.sd->min_label = old_min;
     all.sd->max_label = old_max;
-    update_example_indicies(all.audit, ec, -desired_increment);
-  }
+   }
   
   float get_cost_pred(vw& all, cb& c, example* ec, uint32_t index)
   {
@@ -340,7 +332,7 @@ namespace CB
         wc.wap_value = 0.;
       
         //get cost prediction for this action
-        wc.x = get_cost_pred(all, c,ec,i);
+        wc.x = get_cost_pred(all, c, ec, i-1);
 	if (wc.x < min)
 	  {
 	    min = wc.x;
@@ -369,7 +361,7 @@ namespace CB
         wc.wap_value = 0.;
       
         //get cost prediction for this action
-        wc.x = get_cost_pred(all, c,ec,cl->weight_index);
+        wc.x = get_cost_pred(all, c, ec, cl->weight_index - 1);
 	if (wc.x < min || (wc.x == min && cl->weight_index < argmin))
 	  {
 	    min = wc.x;
@@ -408,7 +400,7 @@ namespace CB
         wc.wap_value = 0.;
 
         //get cost prediction for this label
-        wc.x = get_cost_pred(all, c,ec,i);
+        wc.x = get_cost_pred(all, c,ec, all.sd->k + i - 1);
         wc.weight_index = i;
         wc.partial_prediction = 0.;
         wc.wap_value = 0.;
@@ -433,7 +425,7 @@ namespace CB
         wc.wap_value = 0.;
 
         //get cost prediction for this label
-        wc.x = get_cost_pred(all,c,ec,cl->weight_index);
+        wc.x = get_cost_pred(all, c, ec, all.sd->k + cl->weight_index - 1);
         wc.weight_index = cl->weight_index;
         wc.partial_prediction = 0.;
         wc.wap_value = 0.;
@@ -475,16 +467,10 @@ namespace CB
     }
   }
 
-  void learn(void* d, example* ec) {
+  void learn(void* d, learner& base, example* ec) {
     cb* c = (cb*)d;
     vw* all = c->all;
     CB::label* ld = (CB::label*)ec->ld;
-
-    if (command_example(all, ec))
-      {
-	c->base.learn(ec);
-	return;
-      }
 
     //check if this is a test example where we just want a prediction
     if( CB::is_test_label(ld) )
@@ -493,7 +479,7 @@ namespace CB
       cb_test_to_cs_test_label(*all,ec,c->cb_cs_ld);
 
        ec->ld = &c->cb_cs_ld;
-       c->base.learn(ec);
+       base.learn(ec);
        ec->ld = ld;
        return;
     }
@@ -523,19 +509,18 @@ namespace CB
     if (c->cb_type != CB_TYPE_DM)
       {
 	ec->ld = &c->cb_cs_ld;
-	c->base.learn(ec);
+	base.learn(ec);
 	ec->ld = ld;
       }
   }
 
+  void init_driver(void*)
+  {
+    fprintf(stderr, "*estimate* *estimate*                                                avglossreg last pred  last correct\n");
+  }
+
   void print_update(vw& all, cb& c, bool is_test, example *ec)
   {
-    if( c.first_print_call )
-    {
-      fprintf(stderr, "*estimate* *estimate*                                                avglossreg last pred  last correct\n");
-      c.first_print_call = false;
-    }
-
     if (all.sd->weighted_examples > all.sd->dump_interval && !all.quiet && !all.bfgs)
       {
         char label_buf[32];
@@ -653,39 +638,20 @@ namespace CB
   void finish(void* d)
   {
     cb* c=(cb*)d;
-    c->base.finish();
     c->cb_cs_ld.costs.delete_v();
-    free(c);
   }
 
-  void drive(vw* all, void* d)
+  void finish_example(vw& all, void* data, example* ec)
   {
-    cb* c = (cb*)d;
-    example* ec = NULL;
-    while ( true )
-    {
-      if(all-> early_terminate)
-        {
-          all->p->done = true;
-          return;
-        } 
-      if ((ec = VW::get_example(all->p)) != NULL)//semiblocking operation.
-      {
-        learn(d, ec);
-	if (!command_example(&all, ec))
-	  output_example(*all, *c, ec);
-	VW::finish_example(*all, ec);
-      }
-      else if (parser_done(all->p))
-	return;
-    }
+    cb* c = (cb*)data;
+    output_example(all, *c, ec);
+    VW::finish_example(all, ec);
   }
 
-  learner setup(vw& all, std::vector<std::string>&opts, po::variables_map& vm, po::variables_map& vm_file)
+  learner* setup(vw& all, std::vector<std::string>&opts, po::variables_map& vm, po::variables_map& vm_file)
   {
     cb* c = (cb*)calloc(1, sizeof(cb));
     c->all = &all;
-    c->first_print_call = true;
     c->min_cost = 0.;
     c->max_cost = 1.;
     po::options_description desc("CB options");
@@ -718,7 +684,9 @@ namespace CB
       ss << " --cb " << nb_actions;
       all.options_from_file.append(ss.str());
     }
+    all.sd->k = nb_actions;
 
+    size_t problem_multiplier = 2;//default for DR
     if (vm.count("cb_type") || vm_file.count("cb_type"))
     {
       std::string type_string;
@@ -735,39 +703,39 @@ namespace CB
         all.options_from_file.append(type_string);
       }
 
-      c->increment = all.weights_per_problem * all.reg.stride;
-
-      if (type_string.compare("dr") == 0) { 
+      if (type_string.compare("dr") == 0) 
         c->cb_type = CB_TYPE_DR;
-        all.weights_per_problem *= nb_actions * 2;
-      }
-      else if (type_string.compare("dm") == 0) {
-        c->cb_type = CB_TYPE_DM;
-        all.weights_per_problem *= nb_actions * 2;
-      }
-      else if (type_string.compare("ips") == 0) {
-        c->cb_type = CB_TYPE_IPS;
-        all.weights_per_problem *= nb_actions;
-      }
+      else if (type_string.compare("dm") == 0)
+	{
+	  c->cb_type = CB_TYPE_DM;
+	  problem_multiplier = 1;
+	}
+      else if (type_string.compare("ips") == 0)
+	{
+	  c->cb_type = CB_TYPE_IPS;
+	  problem_multiplier = 1;
+	}
       else {
         std::cerr << "warning: cb_type must be in {'ips','dm','dr'}; resetting to dr." << std::endl;
         c->cb_type = CB_TYPE_DR;
-        all.weights_per_problem *= nb_actions * 2;
       }
     }
     else {
       //by default use doubly robust
       c->cb_type = CB_TYPE_DR;
-      all.weights_per_problem *= nb_actions * 2;
       all.options_from_file.append(" --cb_type dr");
     }
 
     *(all.p->lp) = CB::cb_label_parser; 
 
-    all.sd->k = nb_actions;
+    learner* l = new learner(c, learn, all.l, problem_multiplier);
+    l->set_finish_example(finish_example); 
+    l->set_init_driver(init_driver);
+    l->set_finish(finish);
+    // preserve the increment of the base learner since we are
+    // _adding_ to the number of problems rather than multiplying.
+    l->increment = all.l->increment; 
 
-    learner l(c, drive, learn, finish, all.l.sl);
-    c->base = all.l;
     return l;
   }
 }
