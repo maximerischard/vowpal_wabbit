@@ -234,6 +234,7 @@ float finalize_prediction(vw& all, float ret)
   if ( nanpattern(ret))
     {
       cout << "you have a NAN!!!!!" << endl;
+      exit(0);
       return 0.;
     }
   if ( ret > all.sd->max_label )
@@ -536,6 +537,12 @@ float compute_norm(vw& all, example* &ec)
 
   all.set_minmax(all.sd, ld->label);
 
+// insert
+  if (nanpattern(ec->partial_prediction)) {
+	cout << "NAN at example " << ec->example_counter << endl;
+  }
+// endinsert
+
   ec->final_prediction = finalize_prediction(all, ec->partial_prediction * (float)all.sd->contraction);
   
   if(g.active_simulation){
@@ -636,10 +643,11 @@ float compute_norm(vw& all, example* &ec)
 
   if (all.training && all.normalized_updates && ld->label != FLT_MAX && ld->weight > 0) {
     if( all.power_t == 0.5 ) {
-      if (all.reg_mode % 2)
+      if (all.reg_mode % 2) 
         prediction = inline_predict<vec_add_trunc_rescale>(all, ex);
-      else
+      else 
         prediction = inline_predict<vec_add_rescale>(all, ex);
+      
     }
     else {
       if (all.reg_mode % 2)

@@ -37,7 +37,15 @@ void output_and_account_example(example* ec);
      for (feature* f = begin; f!= end; f++) {
        // cout << "looping over features in the namespace" << endl;
        // cout << "feature index " << f->weight_index << " with value " << f->x << endl;
-	
+       // if (all.debug_34645_flag == true) {
+//	  cout << "before calling vec_add_rescale on feature " << f->weight_index << " plus offset = " << offset << endl;
+	  //if (nanpattern(mult*f->x)) {
+//		cout << "NAN" << endl;
+//		cout << "before calling vec_add_rescale on feature " << f->weight_index << endl;
+//
+//		exit(1);
+//	  }
+       // } 
        T(all, dat, mult*f->x, f->weight_index + offset);
      }
    }
@@ -47,7 +55,14 @@ void output_and_account_example(example* ec);
    {
      uint32_t offset = ec->ft_offset;
 
-     // cout << "In foreach_feature, before the loop over namespaces " << ec->indices.size() << endl;
+/*
+     if (ec->example_counter==34645) {
+	all.debug_34645_flag = true;
+	cout << "in foreach_feature in example 34645; starting to loop over " << ec->indices.size() << " namespaces" << endl;
+     }
+     else all.debug_34645_flag = false;
+*/
+
      for (unsigned char* i = ec->indices.begin; i != ec->indices.end; i++) {
 	// cout << "In foreach_feature, current namespace" << endl;
        foreach_feature<T>(all, dat, ec->atomics[*i].begin, ec->atomics[*i].end, offset);

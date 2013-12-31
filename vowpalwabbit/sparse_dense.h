@@ -34,7 +34,14 @@ inline void vec_add_rescale(vw& all, void* p, float fx, uint32_t fi) {
     }
     w[all.normalized_idx] = x_abs;
   }
+
   *(float*)p += w[0] * fx;
+
+  if (nanpattern(*(float*)p)) {
+      cout << "NAN in vec_add_rescale " << fx << endl;
+      exit(1);
+  }
+
 }
 
 inline void vec_add_trunc_rescale(vw& all, void* p, float fx, uint32_t fi) {
