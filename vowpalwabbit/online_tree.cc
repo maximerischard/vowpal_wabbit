@@ -50,32 +50,21 @@ namespace OT {
     entry[pc] = *(float*)&i;
   }
   
-  void set_parent(online_tree& ot, uint32_t weight_index) 
-  {
-    float* entry = get_entry(ot,weight_index);
-    uint32_t i = *(uint32_t*)(entry+pc);
-    i = i | 1;
-    entry[pc] = *(float*)&i;    
-  }
-
   bool parent(online_tree& ot, feature f, float log_delta)
   {
     float* entry = get_entry(ot,f.weight_index);
 
     uint32_t j = *((uint32_t*)(entry+pc));
-    if (j&1) {
-#ifdef DEBUG
-      cout << "Feature " << f.weight_index << " with value " << f.x 
-	   << " is already a parent" << endl;
-#endif
-      return true;
-    }
+    if (log_delta <= entry[delta_loc])
+      {
+	//	cout << "parent by entry " << log_delta << endl;	
+	return true;
+      }
     else
       {
-        entry[delta_loc] = max(entry[delta_loc], log_delta);
         float deviation = 0.;
       
-        float delta_alpha_mult = ot.alpha_mult * entry[delta_loc];
+        float delta_alpha_mult = ot.alpha_mult * log_delta;
 
         if (entry[residual_variance] * 0.71828 > entry[residual_range]*entry[residual_range]*delta_alpha_mult) 
 	  deviation = 2 * sqrt(entry[residual_variance] * 0.71828 * delta_alpha_mult);
@@ -95,7 +84,8 @@ namespace OT {
 #ifdef DEBUG2
 	    cout << "setting parent of feature index " << f.weight_index << endl;
 #endif
-	    set_parent(ot, f.weight_index);
+	    //	    cout << "parent by deviation " << log_delta << "\treg = " << entry[residual_regret] << "\t range = " << entry[residual_range] << "\t variance = " << entry[residual_variance] << "\t deviation = " << deviation << "\t delta_alpha_mult = " << delta_alpha_mult << endl;	
+	    entry[delta_loc] = log_delta;
 	    return true;
 	  }
         else
@@ -108,9 +98,6 @@ namespace OT {
     float* entry = get_entry(ot,f.weight_index);
     float diff = base_loss - feature_loss;
 
-    // cout << "DEBUG: updating regret for " << f.weight_index << endl;
-    // cout << "DEBUG: base_loss " << base_loss << endl;
-    // cout << "DEBUG: feature_loss " << feature_loss << endl;
     entry[residual_regret] += diff;
     entry[residual_variance] += diff*diff;
     if (entry[residual_range] < fabsf(diff))
@@ -171,6 +158,7 @@ namespace OT {
 #endif
 	    feature temp_f = ot->f;
 	    float temp_derived_delta = ot->derived_delta;
+	    //	    cout << "recursing" << endl;
             create_new_features(*ot, ot->original_ec, n);
 	    ot->f = temp_f;
 	    ot->derived_delta = temp_derived_delta;
@@ -192,14 +180,14 @@ namespace OT {
     if (ot.current_depth > ot.max_depth)
       {
 	ot.max_depth = ot.current_depth;
-	cout << "new depth: " << ot.max_depth << "\t" << entry[delta_loc] << "\t" << ot.derived_delta << endl;
+	//	cout << "new depth: " << ot.max_depth << "\t" << entry[delta_loc] << "\t" << ot.derived_delta << endl;
       }
 
     ot.synthetic.atomics[tree].push_back(f);
     ot.synthetic.num_features++;
     ot.synthetic.sum_feat_sq[tree] += f.x*f.x;
  
-    ot.derived_delta = ot.derived_delta + log(ec->num_features);
+    ot.derived_delta = ot.derived_delta + 1 + log(ec->num_features);
     ot.f = f;
     GD::foreach_feature<create_new_feature>(*ot.all, ec, &ot);
     ot.current_depth--;
@@ -396,7 +384,7 @@ namespace OT {
     data->per_feature = (weight*)calloc(all.length()*stride, sizeof(weight));
 
     for (size_t i = 0; i < all.length(); i++)
-      data->per_feature[i*stride + delta_loc] = 1.;
+      data->per_feature[i*stride + delta_loc] = 0.;
 
 /*
     if (data->alpha_mult <= 0) {
