@@ -61,7 +61,6 @@ namespace OT {
   {
     float* entry = get_entry(ot,f.weight_index);
 
-    uint32_t j = *((uint32_t*)(entry+pc));
     if (log_delta <= entry[delta_loc])
       {
 	//	cout << "parent by entry " << log_delta << endl;	
@@ -146,8 +145,7 @@ namespace OT {
 
   void create_new_features(online_tree&, example*, feature);
 
-  inline void create_new_feature(vw& all, void* d, float v, uint32_t u) {
-	  online_tree* ot = (online_tree *)d;
+  inline void create_new_feature(vw& all, online_tree* ot, float v, uint32_t u) {
     	  feature n;
           n.x = v * ot->f.x;
           if (u == ot->f.weight_index) {
@@ -202,7 +200,7 @@ namespace OT {
  
     ot.derived_delta = ot.derived_delta + 1 + log(ec->num_features);
     ot.f = f;
-    GD::foreach_feature<create_new_feature>(*ot.all, ec, &ot);
+    GD::foreach_feature<online_tree*, create_new_feature>(*ot.all, ec, &ot);
     ot.current_depth--;
   }
 
@@ -217,7 +215,6 @@ namespace OT {
     ot.synthetic.end_pass = ec->end_pass;
     ot.synthetic.sorted = ec->sorted;
     ot.synthetic.in_use = ec->in_use;
-    ot.synthetic.done = ec->done;
     
     //things to set
     ot.synthetic.atomics[tree].erase();
@@ -254,8 +251,7 @@ namespace OT {
   }
 
   
-  inline void add_atomic(vw& all, void* d, float v, uint32_t u) {
-      online_tree* ot = (online_tree *)d;
+  inline void add_atomic(vw& all, online_tree* ot, float v, uint32_t u) {
       set_cycle(*ot, u);
       feature f = {v,u};
       create_new_features(*ot, ot->original_ec, f);
@@ -280,7 +276,7 @@ namespace OT {
     
     ot.derived_delta = 0;
     ot.original_ec = ec;
-    GD::foreach_feature<add_atomic>(*ot.all, ec, &ot);
+    GD::foreach_feature<online_tree*, add_atomic>(*ot.all, ec, &ot);
     ot.synthetic.total_sum_feat_sq = ot.synthetic.sum_feat_sq[tree];
     
     // cout << "DEBUG: Returning from tree_features, size of synthetic " << ot.synthetic.atomics[tree].size() << endl << endl;
@@ -424,7 +420,5 @@ namespace OT {
     l->set_finish_example(finish_online_tree_example);
 
     return l;
-
   }
-  
 }

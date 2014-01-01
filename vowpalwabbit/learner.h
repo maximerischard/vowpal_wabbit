@@ -29,6 +29,7 @@ struct learn_data {
   void* data;
   learner* base;
   void (*learn_f)(void* data, learner& base, example*);
+  void (*predict_f)(void* data, learner& base, example*);
 };
 
 struct save_load_data{
@@ -51,14 +52,14 @@ using namespace std;
 namespace LEARNER
 {
   void generic_driver(vw* all);
-
+  
   inline void generic_sl(void*, io_buf&, bool, bool) {}
   inline void generic_learner(void* data, learner& base, example*)
   { cout << "calling generic learner\n";}
   inline void generic_func(void* data) {}
 
   const save_load_data generic_save_load_fd = {NULL, NULL, generic_sl};
-  const learn_data generic_learn_fd = {NULL, NULL, generic_learner};
+  const learn_data generic_learn_fd = {NULL, NULL, generic_learner, NULL};
   const func_data generic_func_fd = {NULL, NULL, generic_func};
 }
 
@@ -84,6 +85,13 @@ public:
     ec->ft_offset -= (uint32_t)(increment*i);
   }
 
+  inline void predict(example* ec, size_t i=0) 
+  { 
+    ec->ft_offset += (uint32_t)(increment*i);
+    learn_fd.predict_f(learn_fd.data, *learn_fd.base, ec);
+    ec->ft_offset -= (uint32_t)(increment*i);
+  }
+
   //called anytime saving or loading needs to happen. Autorecursive.
   inline void save_load(io_buf& io, bool read, bool text) { save_load_fd.save_load_f(save_load_fd.data, io, read, text); if (save_load_fd.base) save_load_fd.base->save_load(io, read, text); }
   inline void set_save_load(void (*sl)(void*, io_buf& io, bool read, bool text))
@@ -94,9 +102,14 @@ public:
   //called to clean up state.  Autorecursive.
   void set_finish(void (*f)(void*)) { finisher_fd = tuple_dbf(learn_fd.data,learn_fd.base,f); }
   inline void finish() 
-  { if (finisher_fd.data) 
+  { 
+    if (finisher_fd.data) 
       {finisher_fd.func(finisher_fd.data); free(finisher_fd.data); } 
-    if (finisher_fd.base) finisher_fd.base->finish(); }
+    if (finisher_fd.base) { 
+      finisher_fd.base->finish();
+      delete finisher_fd.base;
+    }
+  }
 
   void end_pass(){ 
     end_pass_fd.func(end_pass_fd.data);
@@ -142,6 +155,12 @@ public:
 
     learn_fd.data = dat;
     learn_fd.learn_f = l;
+    learn_fd.predict_f = l;
+
+    finisher_fd.data = dat;
+    finisher_fd.base = NULL;
+    finisher_fd.func = LEARNER::generic_func;
+
     set_save_load(sl);
     increment = params_per_weight;
   }
@@ -151,8 +170,13 @@ public:
     *this = *base;
     
     learn_fd.learn_f = l;
+    learn_fd.predict_f = l;
     learn_fd.data = dat;
     learn_fd.base = base;
+
+    finisher_fd.data = dat;
+    finisher_fd.base = base;
+    finisher_fd.func = LEARNER::generic_func;
 
     increment = base->increment * base->weights;
     weights = ws;
