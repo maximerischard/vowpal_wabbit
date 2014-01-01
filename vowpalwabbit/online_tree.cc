@@ -1,3 +1,5 @@
+#include <float.h>
+
 #include "sparse_dense.h"
 #include "simple_label.h"
 #include "gd.h"
@@ -22,6 +24,11 @@ namespace OT {
     size_t num_features;
     size_t max_depth;
     size_t current_depth;
+
+    size_t period;
+    float best_in_period;
+    float best_regret_in_period;
+    float best_previous_period;
     
     vw* all;
     weight* per_feature;
@@ -78,13 +85,19 @@ namespace OT {
 	cout << "Feature " << f.weight_index << " with residual_variance " << entry[residual_variance] << " residual_range " << entry[residual_range] << " residual_regret " << entry[residual_regret] << " deviation " << deviation << endl;
 	cout << "feature " << f.weight_index << " with regret bound " << entry[residual_regret] - deviation << endl;
 #endif
+	float diff = entry[residual_regret] - deviation;
+	if (diff > ot.best_in_period)
+	  ot.best_in_period = diff;	
+	if (entry[residual_regret] > ot.best_regret_in_period)
+	  ot.best_regret_in_period = entry[residual_regret];
 
-        if (entry[residual_regret] - deviation > 0 && ot.all->training)
+        if (diff > ot.best_previous_period && ot.all->training)
 	  {
 #ifdef DEBUG2
 	    cout << "setting parent of feature index " << f.weight_index << endl;
 #endif
-	    //	    cout << "parent by deviation " << log_delta << "\treg = " << entry[residual_regret] << "\t range = " << entry[residual_range] << "\t variance = " << entry[residual_variance] << "\t deviation = " << deviation << "\t delta_alpha_mult = " << delta_alpha_mult << endl;	
+	    //	       cout << "parent by deviation " << log_delta << "\treg = " << entry[residual_regret] << "\t range = " << entry[residual_range] << "\t variance = " << entry[residual_variance] << "\t deviation = " << deviation << "\t delta_alpha_mult = " << delta_alpha_mult << endl;	
+	    ot.best_previous_period = FLT_MAX;
 	    entry[delta_loc] = log_delta;
 	    return true;
 	  }
@@ -280,6 +293,13 @@ namespace OT {
   {
     online_tree* ot=(online_tree*)d;
     
+    if (ec->example_counter % ot->period == 0)
+      {
+	//	cout << ec->example_t << " " << ot->best_in_period << " " << ot->best_regret_in_period << endl;
+	ot->best_previous_period = ot->best_in_period;
+	ot->best_regret_in_period = 0.;
+	ot->best_in_period = 0.;
+      }
     // cout << "---------------- new example, before entering tree features" << endl;
     tree_features(*ot, ec);
 
@@ -383,6 +403,10 @@ namespace OT {
 
     data->per_feature = (weight*)calloc(all.length()*stride, sizeof(weight));
 
+    data->best_previous_period = FLT_MAX;
+    data->best_in_period = 0.;
+    data->period = 100;      
+    
     for (size_t i = 0; i < all.length(); i++)
       data->per_feature[i*stride + delta_loc] = 0.;
 
