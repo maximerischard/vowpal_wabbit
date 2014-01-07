@@ -28,6 +28,7 @@ license as described in the file LICENSE.
 #include "lda_core.h"
 #include "noop.h"
 #include "gd_mf.h"
+#include "online_tree.h"
 #include "mf.h"
 #include "vw.h"
 #include "rand48.h"
@@ -254,6 +255,7 @@ vw* parse_args(int argc, char *argv[])
     ("cb", po::value<size_t>(), "Use contextual bandit learning with <k> costs")
     ("lda", po::value<size_t>(&(all->lda)), "Run lda with <int> topics")
     ("nn", po::value<size_t>(), "Use sigmoidal feedforward network with <k> hidden units")
+    ("online_tree", po::value<float>(), "create an online decision forest")    
     ("cbify", po::value<size_t>(), "Convert multiclass on <k> classes into a contextual bandit problem and solve")
     ("searn", po::value<size_t>(), "use searn, argument=maximum action id or 0 for LDF")
     ;
@@ -439,7 +441,6 @@ vw* parse_args(int argc, char *argv[])
     cout << version.to_string() << "\n";
     exit(0);
   }
-
 
   if(vm.count("ngram")){
     if(vm.count("sort_features"))
@@ -643,6 +644,13 @@ vw* parse_args(int argc, char *argv[])
 	}
     }
 
+  if (vm.count("bfgs") || vm.count("conjugate_gradient")) 
+    BFGS::setup(*all, to_pass_further, vm, vm_file);
+
+  if (vm.count("online_tree") || vm_file.count("online_tree")) {
+    all->l = OT::setup(*all, to_pass_further, vm, vm_file);
+  }
+
   // matrix factorization enabled
   if (all->rank > 0) {
     // store linear + 2*rank weights per index, round up to power of two
@@ -744,6 +752,7 @@ vw* parse_args(int argc, char *argv[])
 	cerr << "decay_learning_rate = " << all->eta_decay_rate << endl;
       if (all->rank > 0)
 	cerr << "rank = " << all->rank << endl;
+
     }
 
   if (vm.count("predictions")) {

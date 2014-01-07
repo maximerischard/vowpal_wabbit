@@ -212,6 +212,7 @@ void sync_weights(vw& all) {
     return;
   uint32_t length = 1 << all.num_bits;
   size_t stride = all.reg.stride;
+
   for(uint32_t i = 0; i < length && all.reg_mode; i++)
     all.reg.weight_vector[stride*i] = trunc_weight(all.reg.weight_vector[stride*i], (float)all.sd->gravity) * (float)all.sd->contraction;
   all.sd->gravity = 0.;
@@ -432,11 +433,13 @@ inline void simple_norm_compute(vw& all, norm_data* nd, float x, uint32_t fi) {
     float inv_norm = 1.f;
     float inv_norm2 = 1.f;
     if(normalized) {
+      // cout << "In normalized" << endl;
       inv_norm /= w[all.normalized_idx];
       inv_norm2 = inv_norm*inv_norm;
       nd->norm_x += x2 * inv_norm2;
     }
     if(adaptive){
+      // cout << "In adaptive" << endl;
       w[1] += nd->g * x2;
 
 #if defined(__SSE2__) && !defined(VW_LDA_NO_SSE)
@@ -448,9 +451,11 @@ inline void simple_norm_compute(vw& all, norm_data* nd, float x, uint32_t fi) {
     t = InvSqrt(w[1]) * inv_norm;
 #endif
     } else {
+      // cout << "Not in adaptive" << endl;
       t *= inv_norm2; //if only using normalized but not adaptive, we're dividing update by feature norm squared
     }
     nd->norm += x2 * t;
+    // cout << "nd->norm" << nd->norm << endl;
   }
 }
 
@@ -495,8 +500,12 @@ float compute_norm(vw& all, example* &ec)
     all.normalized_sum_norm_x += ld->weight * nd.norm_x;
 
     float avg_sq_norm = all.normalized_sum_norm_x / total_weight;
+    // cout << "all.normalized_sum_norm " << all.normalized_sum_norm_x << endl;
     if(all.power_t == 0.5) {
-      if(all.adaptive) nd.norm /= sqrt(avg_sq_norm);
+      if(all.adaptive) { 
+        // cout << "Here, avg_sq_norm " << avg_sq_norm << endl;
+	nd.norm /= sqrt(avg_sq_norm);
+      }
       else nd.norm /= avg_sq_norm;
     } else {
       float power_t_norm = 1.f - (all.adaptive ? all.power_t : 0.f);
@@ -553,10 +562,12 @@ void local_predict(vw& all, gd& g, example* ec)
           if(!adaptive && all.power_t != 0) eta_t *= powf(t,-all.power_t);
 
           float update = 0.f;
-          if( all.invariant_updates )
+          if( all.invariant_updates ) {
             update = all.loss->getUpdate(ec->final_prediction, ld->label, eta_t, norm);
-          else
+	  }
+          else {
             update = all.loss->getUnsafeUpdate(ec->final_prediction, ld->label, eta_t, norm);
+	  }
 
 	  ec->eta_round = (float) (update / all.sd->contraction);
 

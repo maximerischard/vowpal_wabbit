@@ -34,7 +34,8 @@ inline void vec_add_rescale(vw& all, float* p, float fx, uint32_t fi) {
     }
     w[all.normalized_idx] = x_abs;
   }
-  *p += w[0] * fx;
+
+  *(float*)p += w[0] * fx;
 }
 
 inline void vec_add_trunc_rescale(vw& all, float* p, float fx, uint32_t fi) {

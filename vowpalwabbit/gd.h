@@ -34,8 +34,20 @@ void output_and_account_example(example* ec);
  template <class R, void (*T)(vw&, R, float, uint32_t)>
    void foreach_feature(vw& all, R dat, feature* begin, feature* end, uint32_t offset=0, float mult=1.)
    {
-     for (feature* f = begin; f!= end; f++)
+     for (feature* f = begin; f!= end; f++) {
+       // cout << "looping over features in the namespace" << endl;
+       // cout << "feature index " << f->weight_index << " with value " << f->x << endl;
+       // if (all.debug_34645_flag == true) {
+//	  cout << "before calling vec_add_rescale on feature " << f->weight_index << " plus offset = " << offset << endl;
+	  //if (nanpattern(mult*f->x)) {
+//		cout << "NAN" << endl;
+//		cout << "before calling vec_add_rescale on feature " << f->weight_index << endl;
+//
+//		exit(1);
+//	  }
+       // } 
        T(all, dat, mult*f->x, f->weight_index + offset);
+     }
    }
 
  template <class R, void (*T)(vw&, R, float, uint32_t)>

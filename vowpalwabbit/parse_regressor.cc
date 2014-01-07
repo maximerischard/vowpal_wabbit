@@ -40,6 +40,7 @@ void initialize_regressor(vw& all)
       cerr << all.program_name << ": Failed to allocate weight array with " << all.num_bits << " bits: try decreasing -b <bits>" << endl;
       throw exception();
     }
+  
   if (all.random_weights)
     {
       for (size_t j = 0; j < length; j++)
@@ -233,7 +234,6 @@ void save_load_header(vw& all, io_buf& model_file, bool read, bool text)
       if (read)
 	all.options_from_file.assign(buff2);
     }
-
 }
 
 void dump_regressor(vw& all, string reg_name, bool as_text)
