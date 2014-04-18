@@ -1,13 +1,14 @@
 #include <float.h>
 
-#include "sparse_dense.h"
+#include "reductions.h"
 #include "simple_label.h"
 #include "gd.h"
 #include "rand48.h"
 
 using namespace std;
+using namespace LEARNER;
 
-namespace OT {
+namespace ONLINE_TREE {
 
   const size_t stride = 5;
 
@@ -46,8 +47,8 @@ namespace OT {
   const size_t delta_loc = 4;
 
   float* get_entry(online_tree& ot, uint32_t weight_index) {
-    return &(ot.per_feature[(weight_index & ot.all->reg.weight_mask) 
-	/ ot.all->reg.stride * OT::stride]);
+    return &(ot.per_feature[((weight_index & ot.all->reg.weight_mask) 
+			     >> ot.all->reg.stride_shift) * ONLINE_TREE::stride]);
   }
 
   void clear_cycle(online_tree& ot, uint32_t weight_index) {
@@ -143,50 +144,51 @@ namespace OT {
     return i & 2;
   }
 
-  void create_new_features(online_tree&, example*, feature);
+  void create_new_features(online_tree& ot, example& ec, feature f);
 
-  inline void create_new_feature(vw& all, online_tree* ot, float v, uint32_t u) {
+  inline void create_new_feature(online_tree& ot, float v, float& w) {
     	  feature n;
-          n.x = v * ot->f.x;
-          if (u == ot->f.weight_index) {
-                uint64_t z = ot->f.weight_index;
+          n.x = v * ot.f.x;
+	  uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
+          if (index == ot.f.weight_index) {
+                uint64_t z = ot.f.weight_index;
                 n.weight_index =
-                        ((size_t)(merand48(z) * all.reg.weight_mask) * all.reg.stride) &
-                         all.reg.weight_mask;
+		  ((size_t)(merand48(z) * ot.all->reg.weight_mask) << ot.all->reg.stride_shift) &
+		  ot.all->reg.weight_mask;
           }
           else {
-                n.weight_index = ((u ^ ot->f.weight_index ) * mult_const ) & all.reg.weight_mask;
+                n.weight_index = ((index ^ ot.f.weight_index ) * mult_const ) & ot.all->reg.weight_mask;
           }
 
-          if (used_feature(*ot, n.weight_index) || n.x == 0.0) return;
+          if (used_feature(ot, n.weight_index) || n.x == 0.0) return;
 
-          set_cycle(*ot, n.weight_index);
+          set_cycle(ot, n.weight_index);
 
-          if (parent(*ot, n, ot->derived_delta)) {
+          if (parent(ot, n, ot.derived_delta)) {
             // cout << "DEBUG recursion, calling create_new_features on feature index " << n.weight_index << " with value " << n.x << endl;
 #ifdef DEBUG2
-            cout << ec->example_counter << ": New feature " << n.weight_index << " = product of features " << ot->f.weight_index << " and " << u << endl;
+            cout << ec->example_counter << ": New feature " << n.weight_index << " = product of features " << ot.f.weight_index << " and " << index << endl;
 #endif
-	    feature temp_f = ot->f;
-	    float temp_derived_delta = ot->derived_delta;
-	    //	    cout << "recursing" << endl;
-            create_new_features(*ot, ot->original_ec, n);
-	    ot->f = temp_f;
-	    ot->derived_delta = temp_derived_delta;
+	    feature temp_f = ot.f;
+	    float temp_derived_delta = ot.derived_delta;
+
+            create_new_features(ot, *(ot.original_ec), n);
+	    ot.f = temp_f;
+	    ot.derived_delta = temp_derived_delta;
           }
           else {
 #ifdef DEBUG
-            cout << "Putting a new feature " << n.weight_index << " in out set, product of features " << u << " and " << ot->f.weight_index << endl;
+            cout << "Putting a new feature " << n.weight_index << " in out set, product of features " << index << " and " << ot.f.weight_index << endl;
 #endif
-            ot->out_set.push_back(n);
+            ot.out_set.push_back(n);
           }
 
   }
   
-  void create_new_features(online_tree& ot, example* ec, feature f)
+  void create_new_features(online_tree& ot, example& ec, feature f)
   {
   //cout << "DEBUG in create_new_features, feature index = " << f.weight_index << " value = " << f.x << endl;
-    float* entry = get_entry(ot,f.weight_index);
+    //    float* entry = get_entry(ot,f.weight_index);
     ot.current_depth++;
     if (ot.current_depth > ot.max_depth)
       {
@@ -198,23 +200,23 @@ namespace OT {
     ot.synthetic.num_features++;
     ot.synthetic.sum_feat_sq[tree] += f.x*f.x;
  
-    ot.derived_delta = ot.derived_delta + 1 + log(ec->num_features);
+    ot.derived_delta = ot.derived_delta + 1 + log(ec.num_features);
     ot.f = f;
-    GD::foreach_feature<online_tree*, create_new_feature>(*ot.all, ec, &ot);
+    GD::foreach_feature<online_tree, create_new_feature>(*ot.all, ec, ot);
     ot.current_depth--;
   }
 
-  void setup_synthetic(online_tree& ot, example* ec)
+  void setup_synthetic(online_tree& ot, example& ec)
   {//things to copy
-    ot.synthetic.ld = ec->ld;
-    ot.synthetic.tag = ec->tag;
-    ot.synthetic.example_counter = ec->example_counter;
-    ot.synthetic.ft_offset = ec->ft_offset;
+    ot.synthetic.ld = ec.ld;
+    ot.synthetic.tag = ec.tag;
+    ot.synthetic.example_counter = ec.example_counter;
+    ot.synthetic.ft_offset = ec.ft_offset;
 
-    ot.synthetic.test_only = ec->test_only;
-    ot.synthetic.end_pass = ec->end_pass;
-    ot.synthetic.sorted = ec->sorted;
-    ot.synthetic.in_use = ec->in_use;
+    ot.synthetic.test_only = ec.test_only;
+    ot.synthetic.end_pass = ec.end_pass;
+    ot.synthetic.sorted = ec.sorted;
+    ot.synthetic.in_use = ec.in_use;
     
     //things to set
     ot.synthetic.atomics[tree].erase();
@@ -222,7 +224,7 @@ namespace OT {
     ot.synthetic.num_features = 0;
     ot.synthetic.total_sum_feat_sq = 0;
     ot.synthetic.sum_feat_sq[tree] = 0;
-    ot.synthetic.example_t = ec->example_t;
+    ot.synthetic.example_t = ec.example_t;
 
     if (ot.synthetic.indices.size()==0)
       ot.synthetic.indices.push_back(tree);
@@ -251,13 +253,15 @@ namespace OT {
   }
 
   
-  inline void add_atomic(vw& all, online_tree* ot, float v, uint32_t u) {
-      set_cycle(*ot, u);
-      feature f = {v,u};
-      create_new_features(*ot, ot->original_ec, f);
+  inline void add_atomic(online_tree& ot, float v, float& w) 
+  {
+    uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
+    set_cycle(ot, index);
+    feature f = {v, index};
+    create_new_features(ot, *(ot.original_ec), f);
   }
-
-  void tree_features(online_tree& ot, example* ec)
+  
+  void tree_features(online_tree& ot, example& ec)
   {//called with all.reg.stride = 4
     // entry[min_value] is min feature
     // entry[max_value] is max feature
@@ -271,12 +275,12 @@ namespace OT {
 
     // simple_print_features(*(ot.all), &ot.synthetic);
 #ifdef DEBUG2
-    if (ec->example_counter==1) simple_print_features(*(ot.all), ec);
+    if (ec.example_counter==1) simple_print_features(*(ot.all), ec);
 #endif
     
     ot.derived_delta = 0;
-    ot.original_ec = ec;
-    GD::foreach_feature<online_tree*, add_atomic>(*ot.all, ec, &ot);
+    ot.original_ec = &ec;
+    GD::foreach_feature<online_tree, add_atomic>(*ot.all, ec, ot);
     ot.synthetic.total_sum_feat_sq = ot.synthetic.sum_feat_sq[tree];
     
     // cout << "DEBUG: Returning from tree_features, size of synthetic " << ot.synthetic.atomics[tree].size() << endl << endl;
@@ -285,95 +289,88 @@ namespace OT {
     clear_features(ot, ot.out_set);
   }
   
-  void learn(void* d, learner& base, example* ec)
+  void learn(online_tree& ot, learner& base, example& ec)
   {
-    online_tree* ot=(online_tree*)d;
-    
-    if (ec->example_counter % ot->period == 0)
+    if (ec.example_counter % ot.period == 0)
       {
-	//	cout << ec->example_t << " " << ot->best_in_period << " " << ot->best_regret_in_period << endl;
-	ot->best_previous_period = ot->best_in_period;
-	ot->best_regret_in_period = 0.;
-	ot->best_in_period = 0.;
+	//	cout << ec.example_t << " " << ot.best_in_period << " " << ot.best_regret_in_period << endl;
+	ot.best_previous_period = ot.best_in_period;
+	ot.best_regret_in_period = 0.;
+	ot.best_in_period = 0.;
       }
     // cout << "---------------- new example, before entering tree features" << endl;
-    tree_features(*ot, ec);
+    tree_features(ot, ec);
 
-    base.learn(&ot->synthetic);
-    ot->num_features = ot->synthetic.num_features;
+    base.learn(ot.synthetic);
+    ot.num_features = ot.synthetic.num_features;
 
-    label_data* ld = (label_data*)(ec->ld);
+    label_data* ld = (label_data*)(ec.ld);
 
-    ec->final_prediction = ot->synthetic.final_prediction;
-    ec->loss = ot->synthetic.loss;
+    ec.final_prediction = ot.synthetic.final_prediction;
+    ec.loss = ot.synthetic.loss;
 
-    float base_loss = ot->synthetic.loss;
+    float base_loss = ot.synthetic.loss;
 
 #ifdef DEBUG2
-    cout << "example " << ot->synthetic.example_counter << " count " << ot->synthetic.atomics[tree].size();
-    cout << " loss " << ot->synthetic.loss << "\t";
-    simple_print_features(*(ot->all), &ot->synthetic);
+    cout << "example " << ot.synthetic.example_counter << " count " << ot.synthetic.atomics[tree].size();
+    cout << " loss " << ot.synthetic.loss << "\t";
+    simple_print_features(*(ot.all), &ot.synthetic);
 #endif
 
     float old_base = ld->initial;
-    ld->initial += ec->final_prediction;
+    ld->initial += ec.final_prediction;
 
-    // cout << "final_prediction " << ec->final_prediction << endl;
-    // cout << "loss " << ec->loss << endl;
-    ot->synthetic.num_features = 1;
+    // cout << "final_prediction " << ec.final_prediction << endl;
+    // cout << "loss " << ec.loss << endl;
+    ot.synthetic.num_features = 1;
 
 #ifdef DEBUG
-    cout << "example " << ot->synthetic.example_counter <<
-       " outset size "<< ot->out_set.size() << endl;
+    cout << "example " << ot.synthetic.example_counter <<
+       " outset size "<< ot.out_set.size() << endl;
 #endif
     
-    for (feature *f = ot->out_set.begin; f != ot->out_set.end; f++)
+    for (feature *f = ot.out_set.begin; f != ot.out_set.end; f++)
       {
-	ot->synthetic.atomics[tree].erase();
-	ot->synthetic.atomics[tree].push_back(*f);
+	ot.synthetic.atomics[tree].erase();
+	ot.synthetic.atomics[tree].push_back(*f);
 
-	ot->synthetic.sum_feat_sq[tree] = f->x*f->x;
-	ot->synthetic.total_sum_feat_sq = ot->synthetic.sum_feat_sq[tree];
+	ot.synthetic.sum_feat_sq[tree] = f->x*f->x;
+	ot.synthetic.total_sum_feat_sq = ot.synthetic.sum_feat_sq[tree];
 
 	// cout << "updating regret of feature " << f->weight_index << endl;
-	base.learn(&ot->synthetic);
+	base.learn(ot.synthetic);
 
-	update_regret(*ot, *f, base_loss, ot->synthetic.loss);
+	update_regret(ot, *f, base_loss, ot.synthetic.loss);
       }
 
     ld->initial = old_base;
   }
 
-  void finish(void* d)
+  void finish(online_tree& ot)
   {
-    online_tree* ot=(online_tree*)d;
+    ot.synthetic.atomics[tree].delete_v();
+    ot.out_set.delete_v();
     
-    ot->synthetic.atomics[tree].delete_v();
-    ot->out_set.delete_v();
-    
-    free(ot->per_feature);
+    free(ot.per_feature);
   }
 
-  void finish_online_tree_example(vw& all, void* d, example* ec)
+  void finish_online_tree_example(vw& all, online_tree& ot, example& ec)
   {
-    online_tree *ot = (online_tree *)d;
-    size_t temp_num_features = ec->num_features;
-    ec->num_features = ot->num_features;
-    output_and_account_example(all, ec);
-    ec->num_features = temp_num_features;
-    VW::finish_example(all,ec);
+    size_t temp_num_features = ec.num_features;
+    ec.num_features = ot.num_features;
+    output_and_account_example(all,ec);
+    ec.num_features = temp_num_features;
+    VW::finish_example(all, &ec);
   }
 
   
-  void save_load(void* data, io_buf& model_file, bool read, bool text)
+  void save_load(online_tree& ot, io_buf& model_file, bool read, bool text)
   {
-    online_tree* ot=(online_tree*)data;
-    
     if (model_file.files.size() > 0)
-      for (size_t i = 0; i < ot->all->length(); i++)
+      for (size_t i = 0; i < ot.all->length(); i++)
 	{ 
 	  char buff[512];
-	  weight* entry = &(ot->per_feature[stride*i]);
+	  weight* entry = &(ot.per_feature[stride*i]);
 	  uint32_t text_len = sprintf(buff, " parent: %ui residual_range: %f residual_variance: %f residual_regret: %f delta: %f\n", *(uint32_t*)(entry+pc), entry[residual_range], entry[residual_variance], entry[residual_regret], entry[delta_loc]);
 	  bin_text_read_write_fixed(model_file, (char*)entry, sizeof(weight)*stride,
 				    "", read,
@@ -414,10 +411,12 @@ namespace OT {
 */
 
     data->all = &all;
-    learner* l = new learner(data, learn, all.l);
-    l->set_save_load(save_load);
-    l->set_finish(finish);
-    l->set_finish_example(finish_online_tree_example);
+    learner* l = new learner(data, all.l);
+    l->set_learn<online_tree, learn>();
+    l->set_predict<online_tree, learn>();
+    l->set_save_load<online_tree,save_load>();
+    l->set_finish<online_tree,finish>();
+    l->set_finish_example<online_tree,finish_online_tree_example>();
 
     return l;
   }

@@ -3,8 +3,8 @@ Copyright (c) by respective owners including Yahoo!, Microsoft, and
 individual contributors. All rights reserved.  Released under a BSD
 license as described in the file LICENSE.
  */
-#ifndef VW_H
-#define VW_H
+#ifndef VOWPAL_WABBIT_H
+#define VOWPAL_WABBIT_H
 
 #include "global_data.h"
 #include "example.h"
@@ -60,7 +60,8 @@ namespace VW {
   //notify VW that you are done with the example.
   void finish_example(vw& all, example* ec);
 
-  void copy_example_data(bool audit, example*&, example*, size_t, void(*copy_example)(void*&,void*));
+  void copy_example_data(bool audit, example*, example*, size_t, void(*copy_label)(void*&,void*));
+  void copy_example_data(bool audit, example*, example*);  // don't copy the label
 
   // after export_example, must call releaseFeatureSpace to free native memory
   primitive_feature_space* export_example(vw& all, example* e, size_t& len);
@@ -94,22 +95,22 @@ namespace VW {
   }
 
   inline float get_weight(vw& all, uint32_t index, uint32_t offset)
-  { return all.reg.weight_vector[((index * all.reg.stride + offset) & all.reg.weight_mask)];}
+  { return all.reg.weight_vector[(((index << all.reg.stride_shift) + offset) & all.reg.weight_mask)];}
 
   inline void set_weight(vw& all, uint32_t index, uint32_t offset, float value)
-  { all.reg.weight_vector[((index * all.reg.stride + offset) & all.reg.weight_mask)] = value;}
+  { all.reg.weight_vector[(((index << all.reg.stride_shift) + offset) & all.reg.weight_mask)] = value;}
 
   inline uint32_t num_weights(vw& all)
   { return (uint32_t)all.length();}
 
   inline uint32_t get_stride(vw& all)
-  { return (uint32_t)all.reg.stride;}
+  { return (uint32_t)(1 << all.reg.stride_shift);}
 
   inline void update_dump_interval(vw& all) {
       if (all.progress_add) { 
-        all.sd->dump_interval += all.progress_arg;
+        all.sd->dump_interval = (float)all.sd->weighted_examples + all.progress_arg;
       } else {
-        all.sd->dump_interval *= all.progress_arg;
+        all.sd->dump_interval = (float)all.sd->weighted_examples * all.progress_arg;
       }
   }
 }

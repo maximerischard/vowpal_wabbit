@@ -3,30 +3,19 @@
  individual contributors. All rights reserved.  Released under a BSD (revised)
  license as described in the file LICENSE.
  */
-#include <fstream>
-#include <float.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #else
 #include <netdb.h>
 #endif
-#include <string.h>
-#include <stdio.h>
-#include <map>
-#include "parse_example.h"
-#include "constant.h"
-#include "sparse_dense.h"
-#include "gd.h"
-#include "cache.h"
+#include "reductions.h"
 #include "simple_label.h"
+#include "gd.h"
 #include "rand48.h"
-#include "vw.h"
-#include <algorithm>
-#include "hash.h"
-#include <sstream>
-#include "parse_primitives.h"
 
 using namespace std;
+
+using namespace LEARNER;
 
 namespace MF {
 
@@ -50,143 +39,143 @@ struct mf {
   vw* all;
 };
 
-void inline_predict(mf* data, vw* all, learner& base, example* &ec) {
+template <bool cache_sub_predictions>
+void predict(mf& data, learner& base, example& ec) {
+  vw* all = data.all;
 
   float prediction = 0;
-  data->sub_predictions.resize(2*all->rank+1, true);
-
-  // set weight to 0 to indicate test example (predict only)
-  float weight = ((label_data*) ec->ld)->weight;
-  ((label_data*) ec->ld)->weight = 0;
+  if (cache_sub_predictions)
+    data.sub_predictions.resize(2*all->rank+1, true);
 
   // predict from linear terms
-  base.learn(ec);
+  base.predict(ec);
 
   // store linear prediction
-  data->sub_predictions[0] = ec->partial_prediction;
-  prediction += ec->partial_prediction;
+  if (cache_sub_predictions)
+    data.sub_predictions[0] = ec.partial_prediction;
+  prediction += ec.partial_prediction;
 
   // store namespace indices
-  copy_array(data->indices, ec->indices);
+  copy_array(data.indices, ec.indices);
+
+  // erase indices
+  ec.indices.erase();
+  ec.indices.push_back(0);
 
   // add interaction terms to prediction
-  for (vector<string>::iterator i = data->pairs.begin(); i != data->pairs.end(); i++) {
-    if (ec->atomics[(int) (*i)[0]].size() > 0 && ec->atomics[(int) (*i)[1]].size() > 0) {
+  for (vector<string>::iterator i = data.pairs.begin(); i != data.pairs.end(); i++) {
 
-      // set example to left namespace only
-      ec->indices.erase();
-      ec->indices.push_back((int) (*i)[0]);
+    int left_ns = (int) (*i)[0];
+    int right_ns = (int) (*i)[1];
 
+    if (ec.atomics[left_ns].size() > 0 && ec.atomics[right_ns].size() > 0) {
       for (size_t k = 1; k <= all->rank; k++) {
+
+	ec.indices[0] = left_ns;
+
 	// compute l^k * x_l using base learner
-	base.learn(ec, k);
-	data->sub_predictions[2*k-1] = ec->partial_prediction;
-      }
+	base.predict(ec, k);
+	float x_dot_l = ec.partial_prediction;
+	if (cache_sub_predictions)
+	  data.sub_predictions[2*k-1] = x_dot_l;
 
-      // set example to right namespace only
-      ec->indices.erase();
-      ec->indices.push_back((int) (*i)[1]);
+	// set example to right namespace only
+	ec.indices[0] = right_ns;
 
-      for (size_t k = 1; k <= all->rank; k++) {
 	// compute r^k * x_r using base learner
-	base.learn(ec, k + all->rank);
-	data->sub_predictions[2*k] = ec->partial_prediction;
-      }
+	base.predict(ec, k + all->rank);
+	float x_dot_r = ec.partial_prediction;
+	if (cache_sub_predictions)
+	  data.sub_predictions[2*k] = x_dot_r;
 
-      // accumulate prediction
-      for (size_t k = 1; k <= all->rank; k++)
-	prediction += (data->sub_predictions[2*k-1] * data->sub_predictions[2*k]);
+	// accumulate prediction
+	prediction += (x_dot_l * x_dot_r);
+      }
     }
   }
   // restore namespace indices and label
-  copy_array(ec->indices, data->indices);
-
-  ((label_data*) ec->ld)->weight = weight;
+  copy_array(ec.indices, data.indices);
 
   // finalize prediction
-  ec->partial_prediction = prediction;
-  ec->final_prediction = GD::finalize_prediction(*(data->all), ec->partial_prediction);
-
+  ec.partial_prediction = prediction;
+  ec.final_prediction = GD::finalize_prediction(*(data.all), ec.partial_prediction);
 }
 
-
-void learn(void* d, learner& base, example* ec) {
-  mf* data = (mf*) d;
-  vw* all = data->all;
+void learn(mf& data, learner& base, example& ec) {
+  vw* all = data.all;
 
   // predict with current weights
-  inline_predict(data, all, base, ec);
-
-  // force base learner to use precomputed prediction
-  ec->precomputed_prediction = true;
+  predict<true>(data, base, ec);
 
   // update linear weights
-  base.learn(ec);
+  base.update(ec);
 
   // store namespace indices
-  copy_array(data->indices, ec->indices);
+  copy_array(data.indices, ec.indices);
+
+  // erase indices
+  ec.indices.erase();
+  ec.indices.push_back(0);
 
   // update interaction terms
   // looping over all pairs of non-empty namespaces
-  for (vector<string>::iterator i = data->pairs.begin(); i != data->pairs.end(); i++) {
-    if (ec->atomics[(int) (*i)[0]].size() > 0 && ec->atomics[(int) (*i)[1]].size() > 0) {
+  for (vector<string>::iterator i = data.pairs.begin(); i != data.pairs.end(); i++) {
+
+    int left_ns = (int) (*i)[0];
+    int right_ns = (int) (*i)[1];
+
+    if (ec.atomics[left_ns].size() > 0 && ec.atomics[right_ns].size() > 0) {
 
       // set example to left namespace only
-      ec->indices.erase();
-      ec->indices.push_back((int) (*i)[0]);
+      ec.indices[0] = left_ns;
 
       // store feature values in left namespace
-      copy_array(data->temp_features, ec->atomics[(int) (*i)[0]]);
+      copy_array(data.temp_features, ec.atomics[left_ns]);
 
       for (size_t k = 1; k <= all->rank; k++) {
 
 	// multiply features in left namespace by r^k * x_r
-	for (feature* f = ec->atomics[(int) (*i)[0]].begin; f != ec->atomics[(int) (*i)[0]].end; f++)
-	  f->x *= data->sub_predictions[2*k];
+	for (feature* f = ec.atomics[left_ns].begin; f != ec.atomics[left_ns].end; f++)
+	  f->x *= data.sub_predictions[2*k];
 
 	// update l^k using base learner
-	base.learn(ec, k);
+	base.update(ec, k);
 
 	// restore left namespace features (undoing multiply)
-	copy_array(ec->atomics[(int) (*i)[0]], data->temp_features);
+	copy_array(ec.atomics[left_ns], data.temp_features);
       }
 
-
       // set example to right namespace only
-      ec->indices.erase();
-      ec->indices.push_back((int) (*i)[1]);
+      ec.indices[0] = right_ns;
 
       // store feature values for right namespace
-      copy_array(data->temp_features, ec->atomics[(int) (*i)[1]]);
+      copy_array(data.temp_features, ec.atomics[right_ns]);
 
       for (size_t k = 1; k <= all->rank; k++) {
 
 	// multiply features in right namespace by l^k * x_l
-	for (feature* f = ec->atomics[(int) (*i)[1]].begin; f != ec->atomics[(int) (*i)[1]].end; f++)
-	  f->x *= data->sub_predictions[2*k-1];
+	for (feature* f = ec.atomics[right_ns].begin; f != ec.atomics[right_ns].end; f++)
+	  f->x *= data.sub_predictions[2*k-1];
 
 	// update r^k using base learner
-	base.learn(ec, k + all->rank);
+	base.update(ec, k + all->rank);
 
 	// restore right namespace features
-	copy_array(ec->atomics[(int) (*i)[1]], data->temp_features);
+	copy_array(ec.atomics[right_ns], data.temp_features);
       }
     }
   }
-  // restore namespace indices and unset precomputed prediction
-  copy_array(ec->indices, data->indices);
-
-  ec->precomputed_prediction = false;
+  // restore namespace indices
+  copy_array(ec.indices, data.indices);
 }
 
-void finish(void* data) {
-  mf* o = (mf*) data;
+void finish(mf& o) {
   // restore global pairs
-  o->all->pairs = o->pairs;
+  o.all->pairs = o.pairs;
 
   // clean up local v_arrays
-  o->indices.delete_v();
-  o->sub_predictions.delete_v();
+  o.indices.delete_v();
+  o.sub_predictions.delete_v();
 }
 
 
@@ -205,11 +194,13 @@ learner* setup(vw& all, po::variables_map& vm) {
   // initialize weights randomly
   if(!vm.count("initial_regressor"))
     {
-      for (size_t j = 0; j < (all.reg.weight_mask + 1) / all.reg.stride; j++)
-	all.reg.weight_vector[j*all.reg.stride] = (float) (0.1 * frand48());
+      for (size_t j = 0; j < (all.reg.weight_mask + 1) >> all.reg.stride_shift; j++)
+	all.reg.weight_vector[j << all.reg.stride_shift] = (float) (0.1 * frand48());
     }
-  learner* l = new learner(data, learn, all.l, 2*data->rank+1);
-  l->set_finish(finish);
+  learner* l = new learner(data, all.l, 2*data->rank+1);
+  l->set_learn<mf, learn>();
+  l->set_predict<mf, predict<false> >();
+  l->set_finish<mf,finish>();
   return l;
 }
 }

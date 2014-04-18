@@ -5,7 +5,9 @@ license as described in the file LICENSE.
  */
 // This is a learner which does nothing with examples.  Used when VW is used as a compressor.
 
-#include "vw.h"
+#include "reductions.h"
+
+using namespace LEARNER;
 
 namespace NOOP {
   learner* setup(vw& all)

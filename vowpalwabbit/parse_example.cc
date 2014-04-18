@@ -12,6 +12,7 @@ license as described in the file LICENSE.
 #include "unique_sort.h"
 #include "global_data.h"
 #include "constant.h"
+#include "memory.h"
 
 using namespace std;
 
@@ -53,7 +54,7 @@ char* copy(char* base)
 {
   size_t len = 0;
   while (base[len++] != '\0');
-  char* ret = (char *)calloc(len,sizeof(char));
+  char* ret = (char *)calloc_or_die(len,sizeof(char));
   memcpy(ret,base,len);
   return ret;
 }
@@ -183,7 +184,7 @@ public:
           else if ((*c >= 'A') && (*c <= 'Z')) d = 'A';
           else if  (*c == '.')                 d = '.';
           else                                 d = '#';
-          if ((spelling.size() == 0) || (spelling.last() != d))
+          //if ((spelling.size() == 0) || (spelling.last() != d))
             spelling.push_back(d);
         }
         substring spelling_ss = { spelling.begin, spelling.end };
@@ -239,6 +240,8 @@ public:
 	v_array<char> base_v_array;
 	push_many(base_v_array, name.begin, name.end - name.begin);
 	base_v_array.push_back('\0');
+	if (base != NULL)
+	  free(base);
 	base = base_v_array.begin;
       }
       channel_hash = p->hasher(name, hash_base);
@@ -260,7 +263,6 @@ public:
     
   inline void nameSpace(){
     cur_channel_v = 1.0;
-    base = NULL;
     index = 0;
     new_index = false;
     anon = 0;
@@ -271,7 +273,9 @@ public:
 	new_index = true;
       if(audit)
 	{
-	  base = (char *) calloc(2,sizeof(char));
+	  if (base != NULL)
+	    free(base);
+	  base = (char *) calloc_or_die(2,sizeof(char));
 	  base[0] = ' ';
 	  base[1] = '\0';
 	}
@@ -312,15 +316,18 @@ public:
 	this->weights_per_problem = all.wpp;
 	this->affix_features = all.affix_features;
 	this->spelling_features = all.spelling_features;
+	this->base = NULL;
 	audit = all.audit || all.hash_inv;
 	listNameSpace();
+	if (base != NULL)
+	  free(base);
       }
   }
 };
 
 void substring_to_example(vw* all, example* ae, substring example)
 {
-  all->p->lp->default_label(ae->ld);
+  all->p->lp.default_label(ae->ld);
   char* bar_location = safe_index(example.begin, '|', example.end);
   char* tab_location = safe_index(example.begin, '\t', bar_location);
   substring label_space;
@@ -345,7 +352,7 @@ void substring_to_example(vw* all, example* ae, substring example)
   }
 
   if (all->p->words.size() > 0)
-    all->p->lp->parse_label(all->p, all->sd, ae->ld, all->p->words);
+    all->p->lp.parse_label(all->p, all->sd, ae->ld, all->p->words);
   
   TC_parser parser_line(bar_location,example.end,*all,ae);
 }

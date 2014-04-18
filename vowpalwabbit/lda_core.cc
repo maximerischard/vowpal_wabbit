@@ -14,15 +14,15 @@ license as described in the file LICENSE.
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
-#include "parse_example.h"
 #include "constant.h"
 #include "sparse_dense.h"
 #include "gd.h"
-#include "lda_core.h"
-#include "cache.h"
 #include "simple_label.h"
 #include "rand48.h"
-#include "vw.h"
+#include "reductions.h"
+
+using namespace LEARNER;
+using namespace std;
 
 namespace LDA {
 
@@ -42,7 +42,7 @@ public:
     v_array<int> doc_lengths;
     v_array<float> digammas;
     v_array<float> v;
-    std::vector<index_feature> sorted_features;
+    vector<index_feature> sorted_features;
 
     bool total_lambda_init;
     
@@ -493,7 +493,7 @@ v_array<float> old_gamma;
       for (size_t k =0; k<all.lda; k++)
 	new_gamma[k] = new_gamma[k]*v[k]+all.lda_alpha;
     }
-  while (average_diff(all, old_gamma.begin, new_gamma.begin) > 0.001);
+  while (average_diff(all, old_gamma.begin, new_gamma.begin) > all.lda_epsilon);
 
   ec->topic_predictions.erase();
   ec->topic_predictions.resize(all.lda);
@@ -514,12 +514,11 @@ size_t next_pow2(size_t x) {
   return ((size_t)1) << i;
 }
 
-void save_load(void* d, io_buf& model_file, bool read, bool text)
+void save_load(lda& l, io_buf& model_file, bool read, bool text)
 {
-  lda* l = (lda*)d;
-  vw* all = l->all;
+  vw* all = l.all;
   uint32_t length = 1 << all->num_bits;
-  uint32_t stride = all->reg.stride;
+  uint32_t stride = 1 << all->reg.stride_shift;
   
   if (read)
     {
@@ -578,6 +577,18 @@ void save_load(void* d, io_buf& model_file, bool read, bool text)
 
   void learn_batch(lda& l)
   {
+    if (l.sorted_features.empty()) {
+      // This can happen when the socket connection is dropped by the client.
+      // If l.sorted_features is empty, then l.sorted_features[0] does not
+      // exist, so we should not try to take its address in the beginning of
+      // the for loops down there. Since it seems that there's not much to
+      // do in this case, we just return.
+      for (size_t d = 0; d < l.examples.size(); d++)
+	return_simple_example(*l.all, NULL, *l.examples[d]);
+      l.examples.erase();
+      return;
+    }
+
     float eta = -1;
     float minuseta = -1;
 
@@ -586,7 +597,7 @@ void save_load(void* d, io_buf& model_file, bool read, bool text)
 	for (size_t k = 0; k < l.all->lda; k++)
 	  l.total_lambda.push_back(0.f);
 	
-	size_t stride = l.all->reg.stride;
+	size_t stride = 1 << l.all->reg.stride_shift;
 	for (size_t i =0; i <= l.all->reg.weight_mask;i+=stride)
 	  for (size_t k = 0; k < l.all->lda; k++)
 	    l.total_lambda[k] += l.all->reg.weight_vector[i+k];
@@ -638,13 +649,13 @@ void save_load(void* d, io_buf& model_file, bool read, bool text)
       {
 	float score = lda_loop(*l.all, l.Elogtheta, &(l.v[d*l.all->lda]), weights, l.examples[d],l.all->power_t);
 	if (l.all->audit)
-	  GD::print_audit_features(*l.all, l.examples[d]);
+	  GD::print_audit_features(*l.all, *l.examples[d]);
 	// If the doc is empty, give it loss of 0.
 	if (l.doc_lengths[d] > 0) {
 	  l.all->sd->sum_loss -= score;
 	  l.all->sd->sum_loss_since_last_dump -= score;
 	}
-	return_simple_example(*l.all, NULL, l.examples[d]);
+	return_simple_example(*l.all, NULL, *l.examples[d]);
       }
     
     for (index_feature* s = &l.sorted_features[0]; s <= &l.sorted_features.back();)
@@ -681,51 +692,69 @@ void save_load(void* d, io_buf& model_file, bool read, bool text)
     l.doc_lengths.erase();
   }
   
-  void learn(void* d, learner& base, example* ec) 
+  void learn(lda& l, learner& base, example& ec) 
   {
-    lda* l = (lda*)d;
-
-    size_t num_ex = l->examples.size();
-    l->examples.push_back(ec);
-    l->doc_lengths.push_back(0);
-    for (unsigned char* i = ec->indices.begin; i != ec->indices.end; i++) {
-      feature* f = ec->atomics[*i].begin;
-      for (; f != ec->atomics[*i].end; f++) {
+    size_t num_ex = l.examples.size();
+    l.examples.push_back(&ec);
+    l.doc_lengths.push_back(0);
+    for (unsigned char* i = ec.indices.begin; i != ec.indices.end; i++) {
+      feature* f = ec.atomics[*i].begin;
+      for (; f != ec.atomics[*i].end; f++) {
 	index_feature temp = {(uint32_t)num_ex, *f};
-	l->sorted_features.push_back(temp);
-	l->doc_lengths[num_ex] += (int)f->x;
+	l.sorted_features.push_back(temp);
+	l.doc_lengths[num_ex] += (int)f->x;
       }
     }
-    if (++num_ex == l->all->minibatch)
-      learn_batch(*l);
+    if (++num_ex == l.all->minibatch)
+      learn_batch(l);
   }
 
-  void end_pass(void* d)
+  // placeholder
+  void predict(lda& l, learner& base, example& ec)
   {
-    lda* l = (lda*)d;
-    
-    if (l->examples.size())
-      learn_batch(*l);
+    bool test_only = ec.test_only;
+    ec.test_only = true;
+    learn(l, base, ec);
+    ec.test_only = test_only;
   }
 
-void end_examples(void* d)
-{
-  lda* l = (lda*)d;
+  void end_pass(lda& l)
+  {
+    if (l.examples.size())
+      learn_batch(l);
+  }
 
-  for (size_t i = 0; i < l->all->length(); i++) {
-    weight* weights_for_w = & (l->all->reg.weight_vector[i*l->all->reg.stride]);
-    float decay = fmin(1.0, exp(l->decay_levels.last() - l->decay_levels.end[(int)(-1- l->example_t +weights_for_w[l->all->lda])]));
-    for (size_t k = 0; k < l->all->lda; k++) 
+void end_examples(lda& l)
+{
+  for (size_t i = 0; i < l.all->length(); i++) {
+    weight* weights_for_w = & (l.all->reg.weight_vector[i << l.all->reg.stride_shift]);
+    float decay = fmin(1.0, exp(l.decay_levels.last() - l.decay_levels.end[(int)(-1- l.example_t +weights_for_w[l.all->lda])]));
+    for (size_t k = 0; k < l.all->lda; k++) 
       weights_for_w[k] *= decay;
   }
 }
 
-  void finish_example(vw& all, void*, example*ec)
+  void finish_example(vw& all, lda&, example& ec)
 {}
 
-learner* setup(vw&all, std::vector<std::string>&opts, po::variables_map& vm)
+  void finish(lda& ld)
+  {
+    ld.sorted_features.~vector<index_feature>();
+    ld.Elogtheta.delete_v();
+    ld.decay_levels.delete_v();
+    ld.total_new.delete_v();
+    ld.examples.delete_v();
+    ld.total_lambda.delete_v();
+    ld.doc_lengths.delete_v();
+    ld.digammas.delete_v();
+    ld.v.delete_v();
+  }
+
+learner* setup(vw&all, vector<string>&opts, po::variables_map& vm)
 {
-  lda* ld = (lda*)calloc(1,sizeof(lda));
+  lda* ld = (lda*)calloc_or_die(1,sizeof(lda));
+  ld->sorted_features = vector<index_feature>();
+  ld->total_lambda_init = 0;
   ld->all = &all;
   ld->example_t = all.initial_t;
 
@@ -734,6 +763,7 @@ learner* setup(vw&all, std::vector<std::string>&opts, po::variables_map& vm)
     ("lda_alpha", po::value<float>(&all.lda_alpha), "Prior on sparsity of per-document topic weights")
     ("lda_rho", po::value<float>(&all.lda_rho), "Prior on sparsity of topic distributions")
     ("lda_D", po::value<float>(&all.lda_D), "Number of documents")
+    ("lda_epsilon", po::value<float>(&all.lda_epsilon), "Loop convergence threshold")
     ("minibatch", po::value<size_t>(&all.minibatch), "Minibatch size, for LDA");
 
   po::parsed_options parsed = po::command_line_parser(opts).
@@ -745,7 +775,7 @@ learner* setup(vw&all, std::vector<std::string>&opts, po::variables_map& vm)
 
   all.p->sort_features = true;
   float temp = ceilf(logf((float)(all.lda*2+1)) / logf (2.f));
-  all.reg.stride = ((size_t)1) << (int) temp;
+  all.reg.stride_shift = (size_t)temp;
   all.random_weights = true;
   all.add_constant = false;
 
@@ -758,17 +788,21 @@ learner* setup(vw&all, std::vector<std::string>&opts, po::variables_map& vm)
   if (vm.count("minibatch")) {
     size_t minibatch2 = next_pow2(all.minibatch);
     all.p->ring_size = all.p->ring_size > minibatch2 ? all.p->ring_size : minibatch2;
-}
+  }
   
   ld->v.resize(all.lda*all.minibatch);
   
   ld->decay_levels.push_back(0.f);
-  
-  learner* l = new learner(ld, learn, save_load, all.reg.stride);
-  l->set_save_load(save_load);
-  l->set_finish_example(finish_example);
-  l->set_end_examples(end_examples);  
-  l->set_end_pass(end_pass);  
+
+  all.l->finish();
+  learner* l = new learner(ld, 1 << all.reg.stride_shift);
+  l->set_learn<lda,learn>();
+  l->set_predict<lda,predict>();
+  l->set_save_load<lda,save_load>();
+  l->set_finish_example<lda,finish_example>();
+  l->set_end_examples<lda,end_examples>();  
+  l->set_end_pass<lda,end_pass>();  
+  l->set_finish<lda,finish>();
   
   return l;
 }

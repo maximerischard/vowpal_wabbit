@@ -14,6 +14,7 @@ license as described in the file LICENSE.
 #include "simple_label.h"
 #include "parser.h"
 #include "gd.h"
+#include "memory.h"
 
 using namespace std;
 
@@ -31,7 +32,7 @@ size_t really_read(int sock, void* in, size_t count)
     {
       if ((r =
 #ifdef _WIN32
-		  _read(sock,buf,(unsigned int)(count-done))
+		  recv(sock,buf,(unsigned int)(count-done),0)
 #else
 		  read(sock,buf,(unsigned int)(count-done))
 #endif
@@ -56,18 +57,16 @@ size_t really_read(int sock, void* in, size_t count)
 void get_prediction(int sock, float& res, float& weight)
 {
   global_prediction p;
-  size_t count = really_read(sock, &p, sizeof(p));
+  really_read(sock, &p, sizeof(p));
   res = p.p;
   weight = p.weight;
-
-  assert(count == sizeof(p));
 }
 
 void send_prediction(int sock, global_prediction p)
 {
   if (
 #ifdef _WIN32
-	  _write(sock, &p, sizeof(p))
+	  send(sock, reinterpret_cast<const char*>(&p), sizeof(p), 0)
 #else
 	  write(sock, &p, sizeof(p))
 #endif
@@ -108,11 +107,7 @@ void print_result(int f, float res, float weight, v_array<char> tag)
       print_tag(ss, tag);
       ss << '\n';
       ssize_t len = ss.str().size();
-#ifdef _WIN32
-	  ssize_t t = _write(f, ss.str().c_str(), (unsigned int)len);
-#else
-	  ssize_t t = write(f, ss.str().c_str(), (unsigned int)len);
-#endif
+      ssize_t t = io_buf::write_file_or_socket(f, ss.str().c_str(), (unsigned int)len);
       if (t != len)
         {
           cerr << "write error" << endl;
@@ -130,11 +125,7 @@ void print_raw_text(int f, string s, v_array<char> tag)
   print_tag (ss, tag);
   ss << '\n';
   ssize_t len = ss.str().size();
-#ifdef _WIN32
-  ssize_t t = _write(f, ss.str().c_str(), (unsigned int)len);
-#else
-  ssize_t t = write(f, ss.str().c_str(), (unsigned int)len);
-#endif
+  ssize_t t = io_buf::write_file_or_socket(f, ss.str().c_str(), (unsigned int)len);
   if (t != len)
     {
       cerr << "write error" << endl;
@@ -158,11 +149,7 @@ void active_print_result(int f, float res, float weight, v_array<char> tag)
 	}
       ss << '\n';
       ssize_t len = ss.str().size();
-#ifdef _WIN32
-	  ssize_t t = _write(f, ss.str().c_str(), (unsigned int)len);
-#else
-	  ssize_t t = write(f, ss.str().c_str(), (unsigned int)len);
-#endif
+      ssize_t t = io_buf::write_file_or_socket(f, ss.str().c_str(), (unsigned int)len);
       if (t != len)
 	cerr << "write error" << endl;
     }
@@ -182,11 +169,8 @@ void print_lda_result(vw& all, int f, float* res, float weight, v_array<char> ta
       print_tag(ss, tag);
       ss << '\n';
       ssize_t len = ss.str().size();
-#ifdef _WIN32
-	  ssize_t t = _write(f, ss.str().c_str(), (unsigned int)len);
-#else
-	  ssize_t t = write(f, ss.str().c_str(), (unsigned int)len);
-#endif
+      ssize_t t = io_buf::write_file_or_socket(f, ss.str().c_str(), (unsigned int)len);
+
       if (t != len)
 	cerr << "write error" << endl;
     }
@@ -204,7 +188,7 @@ void noop_mm(shared_data* sd, float label)
 
 void vw::learn(example* ec)
 {
-  this->l->learn(ec);
+  this->l->learn(*ec);
 }
 
 void compile_gram(vector<string> grams, uint32_t* dest, char* descriptor, bool quiet)
@@ -233,22 +217,22 @@ void compile_gram(vector<string> grams, uint32_t* dest, char* descriptor, bool q
 
 vw::vw()
 {
-  sd = (shared_data *) calloc(1, sizeof(shared_data));
-  sd->dump_interval = (float)exp(1.);   // next update progress dump
+  sd = (shared_data *) calloc_or_die(1, sizeof(shared_data));
+  sd->dump_interval = 1.;   // next update progress dump
   sd->contraction = 1.;
   sd->max_label = 1.;
+  sd->min_label = 0.;
 
   p = new_parser();
   p->emptylines_separate_examples = false;
-  p->lp = (label_parser*)malloc(sizeof(label_parser));
-  *(p->lp) = simple_label;
+  p->lp = simple_label;
 
   reg_mode = 0;
   current_pass = 0;
 
   bfgs = false;
   hessian_on = false;
-  reg.stride = 1;
+  reg.stride_shift = 0;
   num_bits = 18;
   default_bits = true;
   daemon = false;
@@ -256,6 +240,7 @@ vw::vw()
   lda_alpha = 0.1f;
   lda_rho = 0.1f;
   lda_D = 10000.;
+  lda_epsilon = 0.001f;
   minibatch = 1;
   span_server = "";
   m = 15; 
