@@ -10,7 +10,7 @@ using namespace LEARNER;
 
 namespace ONLINE_TREE {
 
-  const size_t stride = 5;
+  const size_t stride = 6;
 
 #define sign(x)       ( ((x) > 0) ? (1):(-1)) 
   
@@ -26,10 +26,16 @@ namespace ONLINE_TREE {
     size_t max_depth;
     size_t current_depth;
 
-    size_t period;
-    float best_in_period;
-    float best_regret_in_period;
-    float best_previous_period;
+    size_t base_period;
+    float period_power;
+
+    size_t next;
+
+    float best_score_in_period;
+    float best_weight_in_period;
+
+    float best_previous_score;
+    float best_previous_weight;
     
     vw* all;
     weight* per_feature;
@@ -45,6 +51,7 @@ namespace ONLINE_TREE {
   const size_t residual_variance = 2;
   const size_t residual_regret = 3;
   const size_t delta_loc = 4;
+  const size_t max_weight = 5;
 
   float* get_entry(online_tree& ot, uint32_t weight_index) {
     return &(ot.per_feature[((weight_index & ot.all->reg.weight_mask) 
@@ -58,7 +65,7 @@ namespace ONLINE_TREE {
     entry[pc] = *(float*)&i;
   }
   
-  bool parent(online_tree& ot, feature f, float log_delta)
+  bool inset(online_tree& ot, feature f, float log_delta)
   {
     float* entry = get_entry(ot,f.weight_index);
 
@@ -86,18 +93,17 @@ namespace ONLINE_TREE {
 	cout << "feature " << f.weight_index << " with regret bound " << entry[residual_regret] - deviation << endl;
 #endif
 	float diff = entry[residual_regret] - deviation;
-	if (diff > ot.best_in_period)
-	  ot.best_in_period = diff;	
-	if (entry[residual_regret] > ot.best_regret_in_period)
-	  ot.best_regret_in_period = entry[residual_regret];
+	if (diff > ot.best_score_in_period)
+	  ot.best_score_in_period = diff;	
 
-        if (diff > ot.best_previous_period && ot.all->training)
+        if (diff > ot.best_previous_score && ot.all->training)
 	  {
 #ifdef DEBUG2
 	    cout << "setting parent of feature index " << f.weight_index << endl;
 #endif
+	    
 	    //	       cout << "parent by deviation " << log_delta << "\treg = " << entry[residual_regret] << "\t range = " << entry[residual_range] << "\t variance = " << entry[residual_variance] << "\t deviation = " << deviation << "\t delta_alpha_mult = " << delta_alpha_mult << endl;	
-	    ot.best_previous_period = FLT_MAX;
+	    ot.best_previous_score = FLT_MAX;
 	    entry[delta_loc] = log_delta;
 	    return true;
 	  }
@@ -144,9 +150,9 @@ namespace ONLINE_TREE {
     return i & 2;
   }
 
-  void create_new_features(online_tree& ot, example& ec, feature f);
+  void create_inset_feature(online_tree& ot, example& ec, feature f);
 
-  inline void create_new_feature(online_tree& ot, float v, float& w) {
+  inline void create_outset_feature(online_tree& ot, float v, float& w) {
     	  feature n;
           n.x = v * ot.f.x;
 	  uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
@@ -164,15 +170,15 @@ namespace ONLINE_TREE {
 
           set_cycle(ot, n.weight_index);
 
-          if (parent(ot, n, ot.derived_delta)) {
-            // cout << "DEBUG recursion, calling create_new_features on feature index " << n.weight_index << " with value " << n.x << endl;
+	  //check in_set here
+          if (inset(ot, n, ot.derived_delta)) {
 #ifdef DEBUG2
             cout << ec->example_counter << ": New feature " << n.weight_index << " = product of features " << ot.f.weight_index << " and " << index << endl;
 #endif
 	    feature temp_f = ot.f;
 	    float temp_derived_delta = ot.derived_delta;
 
-            create_new_features(ot, *(ot.original_ec), n);
+            create_inset_feature(ot, *(ot.original_ec), n);
 	    ot.f = temp_f;
 	    ot.derived_delta = temp_derived_delta;
           }
@@ -184,26 +190,62 @@ namespace ONLINE_TREE {
           }
 
   }
+
+  void set_outset(online_tree& ot, float* entry) 
+  {
+    uint32_t i = *(uint32_t*)(entry+pc);
+    i = i | 1;
+    entry[pc] = *(float*)&i;    
+  }
+
+  bool check_outset(online_tree& ot, float* entry)
+  {
+    uint32_t i = *(uint32_t*)(entry+pc);
+    
+    return i & 1;
+  }
+
+  bool outset(online_tree& ot, float* entry) {
+    if(check_outset(ot, entry)) 
+      return true;
+    else {
+      float w_val = entry[max_weight];
+      if(w_val > ot.best_previous_weight) {
+	set_outset(ot, entry);
+	ot.best_previous_weight = FLT_MAX;
+	return true;
+      }
+      else
+	return false;
+    }
+  }
   
-  void create_new_features(online_tree& ot, example& ec, feature f)
+  void create_inset_feature(online_tree& ot, example& ec, feature f)
   {
   //cout << "DEBUG in create_new_features, feature index = " << f.weight_index << " value = " << f.x << endl;
     //    float* entry = get_entry(ot,f.weight_index);
-    ot.current_depth++;
-    if (ot.current_depth > ot.max_depth)
-      {
-	ot.max_depth = ot.current_depth;
-	//	cout << "new depth: " << ot.max_depth << "\t" << entry[delta_loc] << "\t" << ot.derived_delta << endl;
-      }
 
+    
     ot.synthetic.atomics[tree].push_back(f);
     ot.synthetic.num_features++;
     ot.synthetic.sum_feat_sq[tree] += f.x*f.x;
+
+    float w_val = fabsf(ot.all->reg.weight_vector[f.weight_index & ot.all->reg.weight_mask]);
+    float* entry = get_entry(ot, f.weight_index);
+    if(w_val > entry[max_weight])
+      entry[max_weight] = w_val;
  
-    ot.derived_delta = ot.derived_delta + 1 + log(ec.num_features);
-    ot.f = f;
-    GD::foreach_feature<online_tree, create_new_feature>(*ot.all, ec, ot);
-    ot.current_depth--;
+    //check out_set bit here.
+    if(outset(ot, entry)) {
+      ot.current_depth++;
+      if (ot.current_depth > ot.max_depth)
+	ot.max_depth = ot.current_depth;
+      
+      ot.derived_delta = ot.derived_delta + 1 + log(ec.num_features);
+      ot.f = f;
+      GD::foreach_feature<online_tree, create_outset_feature>(*ot.all, ec, ot);
+      ot.current_depth--;
+    }
   }
 
   void setup_synthetic(online_tree& ot, example& ec)
@@ -258,7 +300,7 @@ namespace ONLINE_TREE {
     uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
     set_cycle(ot, index);
     feature f = {v, index};
-    create_new_features(ot, *(ot.original_ec), f);
+    create_inset_feature(ot, *(ot.original_ec), f);
   }
   
   void tree_features(online_tree& ot, example& ec)
@@ -291,12 +333,15 @@ namespace ONLINE_TREE {
   
   void learn(online_tree& ot, learner& base, example& ec)
   {
-    if (ec.example_counter % ot.period == 0)
+    if (ec.example_counter == ot.next)
       {
-	//	cout << ec.example_t << " " << ot.best_in_period << " " << ot.best_regret_in_period << endl;
-	ot.best_previous_period = ot.best_in_period;
-	ot.best_regret_in_period = 0.;
-	ot.best_in_period = 0.;
+	ot.next = ot.next + ot.base_period * pow(ot.next / ot.base_period, ot.period_power);
+
+	ot.best_previous_score = ot.best_score_in_period;
+	ot.best_previous_weight = ot.best_weight_in_period;
+
+	ot.best_score_in_period = 0.;
+	ot.best_weight_in_period = 0.;
       }
     // cout << "---------------- new example, before entering tree features" << endl;
     tree_features(ot, ec);
@@ -370,7 +415,7 @@ namespace ONLINE_TREE {
       for (size_t i = 0; i < ot.all->length(); i++)
 	{ 
 	  char buff[512];
-	  weight* entry = &(ot.per_feature[stride*i]);
+	  float* entry = &(ot.per_feature[stride*i]);
 	  uint32_t text_len = sprintf(buff, " parent: %ui residual_range: %f residual_variance: %f residual_regret: %f delta: %f\n", *(uint32_t*)(entry+pc), entry[residual_range], entry[residual_variance], entry[residual_regret], entry[delta_loc]);
 	  bin_text_read_write_fixed(model_file, (char*)entry, sizeof(weight)*stride,
 				    "", read,
@@ -381,6 +426,18 @@ namespace ONLINE_TREE {
   learner* setup(vw& all, std::vector<std::string>&opts, po::variables_map& vm, po::variables_map& vm_file)
   {
     online_tree* data = (online_tree*)calloc(1,sizeof(online_tree));
+
+    po::options_description desc("Online Tree options");
+    desc.add_options()
+      ("base_period", po::value<size_t>(), "number of examples between feature creation")
+      ("period_power", po::value<float>(), "power on period");
+
+    po::parsed_options parsed = po::command_line_parser(opts).
+      style(po::command_line_style::default_style ^ po::command_line_style::allow_guessing).
+      options(desc).allow_unregistered().run();
+    opts = po::collect_unrecognized(parsed.options, po::include_positional);
+    po::store(parsed, vm);
+    po::notify(vm);
 
     if (vm.count("online_tree"))
       data->alpha_mult = vm["online_tree"].as< float >();
@@ -394,21 +451,27 @@ namespace ONLINE_TREE {
 	all.options_from_file.append(ss.str());
       }
 
-    data->per_feature = (weight*)calloc(all.length()*stride, sizeof(weight));
+    if (vm.count("base_period"))
+      data->base_period = vm["base_period"].as<size_t>();
+    else
+      data->base_period = 100;
 
-    data->best_previous_period = FLT_MAX;
-    data->best_in_period = 0.;
-    data->period = 100;      
+    data->next = data->base_period;
+
+    if (vm.count("period_power"))
+      data->period_power = vm["period_power"].as<float>();
+    else
+      data->period_power = 0.;
+
+    data->per_feature = (float*)calloc(all.length()*stride, sizeof(weight));
+
+    data->best_previous_score = FLT_MAX;
+    data->best_previous_weight = FLT_MAX;
+    data->best_score_in_period = 0.;
+    data->best_weight_in_period = 0.;
     
     for (size_t i = 0; i < all.length(); i++)
       data->per_feature[i*stride + delta_loc] = 0.;
-
-/*
-    if (data->alpha_mult <= 0) {
-	cerr << "online_tree: parameter should be positive: resetting from " << data->alpha_mult << " to 1" << endl;	
-	data->alpha_mult = 1.;
-    }
-*/
 
     data->all = &all;
     learner* l = new learner(data, all.l);
