@@ -10,12 +10,18 @@ using namespace LEARNER;
 
 namespace ONLINE_TREE {
 
-  const size_t stride = 5;
-
 #define sign(x)       ( ((x) > 0) ? (1):(-1)) 
   
   const size_t tree = 129;
   const size_t mult_const = 95104348457;
+
+  struct feature_stats{
+    uint32_t parent;
+    float range;
+    float variance;
+    float value;
+    float delta;
+  };
 
   struct online_tree{
     example synthetic;
@@ -38,7 +44,9 @@ namespace ONLINE_TREE {
     float best_previous_weight;
     
     vw* all;
-    weight* per_feature;
+    feature_stats* per_feature;
+    float* prev_variance;
+    float* prev_value;
 
     v_array<feature> out_set;
 
@@ -46,25 +54,42 @@ namespace ONLINE_TREE {
     float derived_delta;
   };
 
-  const size_t pc = 0;
-  const size_t residual_range = 1;
-  const size_t residual_variance = 2;
-  const size_t residual_regret = 3;
-  const size_t delta_loc = 4;
-  const size_t weight_variance = residual_variance;
-  const size_t weight_range = residual_range;
-  const size_t previous_weight = residual_regret;
 
-  float* get_entry(online_tree& ot, uint32_t weight_index) {
+  void reduce_fstats(feature_stats& s1, const feature_stats& s2) {
+    s1.parent |= s2.parent;
+    s1.range = max(s1.range, s2.range);
+    s1.variance += s2.variance;
+    s1.value += s2.value;
+    s1.delta = max(s1.delta, s2.delta);
+  }
+
+  void allreduce_fstats(online_tree& ot) {
+    vw& all = *ot.all;
+    for(uint32_t i = 0;i < all.length(); i++) {
+	ot.per_feature[i].variance -= ot.prev_variance[i];
+	ot.per_feature[i].value -= ot.prev_value[i];
+    }
+
+    all_reduce<feature_stats, reduce_fstats>(ot.per_feature, all.total, all.span_server, all.unique_id, all.total, all.node, all.socks);
+
+    for(uint32_t i = 0;i < all.length(); i++) {
+      ot.per_feature[i].variance += ot.prev_variance[i];
+      ot.prev_variance[i] = ot.per_feature[i].variance;
+      ot.per_feature[i].value += ot.prev_value[i];
+      ot.prev_value[i] = ot.per_feature[i].value;
+    }
+  }
+
+
+
+  feature_stats* get_entry(online_tree& ot, uint32_t weight_index) {
     return &(ot.per_feature[((weight_index & ot.all->reg.weight_mask) 
-			     >> ot.all->reg.stride_shift) * ONLINE_TREE::stride]);
+			     >> ot.all->reg.stride_shift)]);
   }
 
   void clear_cycle(online_tree& ot, uint32_t weight_index) {
-    float* entry = get_entry(ot,weight_index);
-    uint32_t i = *(uint32_t*)(entry+pc);
-    i = i^2;
-    entry[pc] = *(float*)&i;
+    feature_stats* entry = get_entry(ot,weight_index);
+    entry->parent ^= 2;
   }
 
   float get_deviation(float range, float variance, float alpha_mult, float log_delta)
@@ -85,22 +110,22 @@ namespace ONLINE_TREE {
   
   bool inset(online_tree& ot, feature f, float log_delta)
   {
-    float* entry = get_entry(ot,f.weight_index);
+    feature_stats* entry = get_entry(ot,f.weight_index);
 
-    if (log_delta <= entry[delta_loc])
+    if (log_delta <= entry->delta)
       {
 	//	cout << "parent by entry " << log_delta << endl;	
 	return true;
       }
     else
       {
-	float deviation = get_deviation(entry[residual_range], entry[residual_variance], ot.alpha_mult, log_delta);
+	float deviation = get_deviation(entry->range, entry->variance, ot.alpha_mult, log_delta);
       
 #ifdef DEBUG2
-	cout << "Feature " << f.weight_index << " with residual_variance " << entry[residual_variance] << " residual_range " << entry[residual_range] << " residual_regret " << entry[residual_regret] << " deviation " << deviation << endl;
-	cout << "feature " << f.weight_index << " with regret bound " << entry[residual_regret] - deviation << endl;
+	cout << "Feature " << f.weight_index << " with residual_variance " << entry->variance << " residual_range " << entry->range << " residual_regret " << entry->value << " deviation " << deviation << endl;
+	cout << "feature " << f.weight_index << " with regret bound " << entry->value - deviation << endl;
 #endif
-	float diff = entry[residual_regret] - deviation;
+	float diff = entry->value - deviation;
 	if (diff > ot.best_score_in_period)
 	  ot.best_score_in_period = diff;	
 
@@ -112,10 +137,10 @@ namespace ONLINE_TREE {
 	    
 	    //	       cout << "parent by deviation " << log_delta << "\treg = " << entry[residual_regret] << "\t range = " << entry[residual_range] << "\t variance = " << entry[residual_variance] << "\t deviation = " << deviation << "\t delta_alpha_mult = " << delta_alpha_mult << endl;	
 	    ot.best_previous_score = FLT_MAX;
-	    entry[delta_loc] = log_delta;
-	    entry[weight_variance] = 0.;
-	    entry[weight_range] = 0.;
-	    entry[previous_weight] = 0.;
+	    entry->delta = log_delta;
+	    entry->variance = 0.;
+	    entry->range = 0.;
+	    entry->value = 0.;
 	    return true;
 	  }
         else
@@ -125,18 +150,20 @@ namespace ONLINE_TREE {
   
   void update_regret(online_tree &ot, feature f, float base_loss, float feature_loss)
   {
-    float* entry = get_entry(ot,f.weight_index);
+    feature_stats* entry = get_entry(ot,f.weight_index);
     float diff = base_loss - feature_loss;
 
-    entry[residual_regret] += diff;
-    entry[residual_variance] += diff*diff;
-    if (entry[residual_range] < fabsf(diff))
-      entry[residual_range] = fabsf(diff);
+    entry->value += diff;
+    entry->variance += diff*diff;
+    if (entry->range < fabsf(diff))
+      entry->range = fabsf(diff);
 
-    if (entry[residual_regret] < 0) {
-	entry[residual_regret] = 0;
-        entry[residual_variance] = 0;
-	entry[residual_range] = 0;
+    //CHECK!!!!!
+
+    if (entry->value < 0) {
+	entry->value = 0;
+        entry->variance = 0;
+	entry->range = 0;
     }
 
 
@@ -147,18 +174,14 @@ namespace ONLINE_TREE {
   
   void set_cycle(online_tree& ot, uint32_t weight_index) 
   {
-    float* entry = get_entry(ot,weight_index);
-    uint32_t i = *(uint32_t*)(entry+pc);
-    i = i | 2;
-    entry[pc] = *(float*)&i;    
+    feature_stats* entry = get_entry(ot,weight_index);
+    entry->parent |= 2;
   }
   
   bool used_feature(online_tree& ot, uint32_t weight_index)
   {
-    float* entry = get_entry(ot,weight_index);
-    uint32_t i = *(uint32_t*)(entry+pc);
-    
-    return i & 2;
+    feature_stats* entry = get_entry(ot,weight_index);
+    return entry->parent & 2;
   }
 
   void create_inset_feature(online_tree& ot, example& ec, feature f);
@@ -202,32 +225,28 @@ namespace ONLINE_TREE {
 
   }
 
-  void set_outset(online_tree& ot, float* entry) 
+  void set_outset(online_tree& ot, feature_stats* entry) 
   {
-    uint32_t i = *(uint32_t*)(entry+pc);
-    i = i | 1;
-    entry[pc] = *(float*)&i;    
+    entry->parent |= 1;
   }
 
-  bool check_outset(online_tree& ot, float* entry)
+  bool check_outset(online_tree& ot, feature_stats* entry)
   {
-    uint32_t i = *(uint32_t*)(entry+pc);
-    
-    return i & 1;
+    return entry->parent & 1;
   }
 
-  bool outset(online_tree& ot, float* entry, float w_val) {
+  bool outset(online_tree& ot, feature_stats* entry, float w_val) {
     if(check_outset(ot, entry)) 
       return true;
     else {
 
       ot.best_weight_in_period = max(ot.best_weight_in_period, fabsf(w_val));
-      float diff = fabsf(w_val - entry[previous_weight]);
-      entry[weight_variance] += diff*diff;
-      entry[weight_range] = max(entry[weight_range], diff);
-      entry[previous_weight] = w_val;     
+      float diff = fabsf(w_val - entry->value);
+      entry->variance += diff*diff;
+      entry->range = max(entry->range, diff);
+      entry->value = w_val;     
  
-      float deviation = get_deviation(entry[weight_range], entry[weight_variance], ot.alpha_mult, ot.derived_delta);
+      float deviation = get_deviation(entry->range, entry->variance, ot.alpha_mult, ot.derived_delta);
       if(fabsf(w_val) - deviation > ot.best_previous_weight) {
 	//cout<<"Putting in outset "<<ot.synthetic.example_counter<<" w_val: "<<w_val<<" deviation: "<<deviation<<endl;
 	//cout<<"Called get_deviation with "<<entry[weight_range]<<" variance: "<<entry[weight_variance]<<" log_delta: "<<ot.derived_delta<<" "<<ot.alpha_mult<<endl;
@@ -251,7 +270,7 @@ namespace ONLINE_TREE {
     ot.synthetic.sum_feat_sq[tree] += f.x*f.x;
 
     float w_val = ot.all->reg.weight_vector[f.weight_index & ot.all->reg.weight_mask];
-    float* entry = get_entry(ot, f.weight_index);    
+    feature_stats* entry = get_entry(ot, f.weight_index);    
  
     //check out_set bit here.
     if(outset(ot, entry, w_val)) {
@@ -433,9 +452,8 @@ namespace ONLINE_TREE {
       for (size_t i = 0; i < ot.all->length(); i++)
 	{ 
 	  char buff[512];
-	  float* entry = &(ot.per_feature[stride*i]);
-	  uint32_t text_len = sprintf(buff, " parent: %ui residual_range: %f residual_variance: %f residual_regret: %f delta: %f\n", *(uint32_t*)(entry+pc), entry[residual_range], entry[residual_variance], entry[residual_regret], entry[delta_loc]);
-	  bin_text_read_write_fixed(model_file, (char*)entry, sizeof(weight)*stride,
+	  uint32_t text_len = sprintf(buff, " parent: %ui residual_range: %f residual_variance: %f residual_regret: %f delta: %f\n", ot.per_feature[i].parent, ot.per_feature[i].range, ot.per_feature[i].variance, ot.per_feature[i].value, ot.per_feature[i].delta);
+	  bin_text_read_write_fixed(model_file, (char*)&ot.per_feature[i], sizeof(feature_stats),
 				    "", read,
 				    buff, text_len, text);
 	}
@@ -481,15 +499,20 @@ namespace ONLINE_TREE {
     else
       data->period_power = 0.;
 
-    data->per_feature = (float*)calloc(all.length()*stride, sizeof(weight));
+    data->per_feature = (feature_stats*)calloc(all.length(), sizeof(feature_stats));
 
     data->best_previous_score = FLT_MAX;
     data->best_previous_weight = FLT_MAX;
     data->best_score_in_period = 0.;
     data->best_weight_in_period = 0.;
     
-    for (size_t i = 0; i < all.length(); i++)
-      data->per_feature[i*stride + delta_loc] = 0.;
+    for (size_t i = 0; i < all.length(); i++) {
+      data->per_feature[i].parent = 0;
+      data->per_feature[i].value = 0.;
+      data->per_feature[i].range = 0.;
+      data->per_feature[i].variance = 0.;
+      data->per_feature[i].delta = 0.;      
+    }
 
     data->all = &all;
     learner* l = new learner(data, all.l);
