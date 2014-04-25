@@ -53,9 +53,9 @@ struct node_socks {
 };
 
 
-template <class T> void addbufs(T* buf1, const T* buf2, const int n) {
+template <class T, void (*f)(T&, const T&)> void addbufs(T* buf1, const T* buf2, const int n) {
   for(int i = 0;i < n;i++) 
-    buf1[i] += buf2[i];
+    f(buf1[1], buf2[i]);
 }
 
 void all_reduce_init(const string master_location, const size_t unique_id, const size_t total, const size_t node, node_socks& socks);
@@ -74,7 +74,7 @@ template <class T> void pass_up(char* buffer, int left_read_pos, int right_read_
 
 }
 
-template <class T>void reduce(char* buffer, const int n, const socket_t parent_sock, const socket_t* child_sockets) {
+template <class T, void (*f)(T&, const T&)>void reduce(char* buffer, const int n, const socket_t parent_sock, const socket_t* child_sockets) {
 
   fd_set fds;
   FD_ZERO(&fds);
@@ -130,7 +130,7 @@ template <class T>void reduce(char* buffer, const int n, const socket_t parent_s
 	      throw exception();
 	    }
 	    
-	    addbufs((T*)buffer + child_read_pos[i]/sizeof(T), (T*)child_read_buf[i], (child_read_pos[i] + read_size)/sizeof(T) - child_read_pos[i]/sizeof(T));
+	    addbufs<T, f>((T*)buffer + child_read_pos[i]/sizeof(T), (T*)child_read_buf[i], (child_read_pos[i] + read_size)/sizeof(T) - child_read_pos[i]/sizeof(T));
 	    
 	    child_read_pos[i] += read_size;
 	    int old_unprocessed = child_unprocessed[i];
@@ -156,11 +156,11 @@ template <class T>void reduce(char* buffer, const int n, const socket_t parent_s
 void broadcast(char* buffer, const int n, const socket_t parent_sock, const socket_t * child_sockets);
 
 
-template <class T> void all_reduce(T* buffer, const int n, const std::string master_location, const size_t unique_id, const size_t total, const size_t node, node_socks& socks) 
+template <class T, void (*f)(T&, const T&)> void all_reduce(T* buffer, const int n, const std::string master_location, const size_t unique_id, const size_t total, const size_t node, node_socks& socks) 
 {
   if(master_location != socks.current_master) 
     all_reduce_init(master_location, unique_id, total, node, socks);
-  reduce<T>((char*)buffer, n*sizeof(T), socks.parent, socks.children);
+  reduce<T, f>((char*)buffer, n*sizeof(T), socks.parent, socks.children);
   broadcast((char*)buffer, n*sizeof(T), socks.parent, socks.children);
 }
 
