@@ -109,7 +109,8 @@ namespace ONLINE_TREE {
   }
   
   bool inset(online_tree& ot, feature f, float log_delta)
-  {
+  {    
+
     feature_stats* entry = get_entry(ot,f.weight_index);
 
     if (log_delta <= entry->delta)
@@ -119,6 +120,8 @@ namespace ONLINE_TREE {
       }
     else
       {
+	if(ot.best_previous_score == FLT_MAX) return false;
+
 	float deviation = get_deviation(entry->range, entry->variance, ot.alpha_mult, log_delta);
       
 #ifdef DEBUG2
@@ -186,20 +189,25 @@ namespace ONLINE_TREE {
 
   void create_inset_feature(online_tree& ot, example& ec, feature f);
 
+  inline uint32_t get_weight_index(online_tree& ot, float& w) {
+    uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
+    uint32_t my_index;
+    if (index == ot.f.weight_index) {
+      uint64_t z = ot.f.weight_index;
+      my_index =  (((size_t)(merand48(z) * ot.all->reg.weight_mask) << ot.all->reg.stride_shift) &
+	      ot.all->reg.weight_mask);
+    }
+    else {
+      my_index = (((index ^ ot.f.weight_index ) * mult_const ) & ot.all->reg.weight_mask);
+    }
+    return my_index;
+  }
+  
   inline void create_outset_feature(online_tree& ot, float v, float& w) {
     	  feature n;
           n.x = v * ot.f.x;
-	  uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
-          if (index == ot.f.weight_index) {
-                uint64_t z = ot.f.weight_index;
-                n.weight_index =
-		  ((size_t)(merand48(z) * ot.all->reg.weight_mask) << ot.all->reg.stride_shift) &
-		  ot.all->reg.weight_mask;
-          }
-          else {
-                n.weight_index = ((index ^ ot.f.weight_index ) * mult_const ) & ot.all->reg.weight_mask;
-          }
-
+	  n.weight_index = get_weight_index(ot, w);
+	  
           if (used_feature(ot, n.weight_index) || n.x == 0.0) return;
 
           set_cycle(ot, n.weight_index);
@@ -239,6 +247,7 @@ namespace ONLINE_TREE {
     if(check_outset(ot, entry)) 
       return true;
     else {
+      if(ot.best_previous_weight == FLT_MAX) return false;
 
       ot.best_weight_in_period = max(ot.best_weight_in_period, fabsf(w_val));
       float diff = fabsf(w_val - entry->value);
@@ -246,10 +255,10 @@ namespace ONLINE_TREE {
       entry->range = max(entry->range, diff);
       entry->value = w_val;     
  
-      float deviation = get_deviation(entry->range, entry->variance, ot.alpha_mult, ot.derived_delta);
+      float deviation = get_deviation(entry->range, entry->variance, ot.alpha_mult, ot.derived_delta+log(ot.out_set.size()));
       if(fabsf(w_val) - deviation > ot.best_previous_weight) {
-	//cout<<"Putting in outset "<<ot.synthetic.example_counter<<" w_val: "<<w_val<<" deviation: "<<deviation<<endl;
-	//cout<<"Called get_deviation with "<<entry[weight_range]<<" variance: "<<entry[weight_variance]<<" log_delta: "<<ot.derived_delta<<" "<<ot.alpha_mult<<endl;
+	//cout<<"Putting in outset "<<ot.synthetic.example_counter<<" w_val: "<<w_val<<" deviation: "<<deviation<<" prev_weight= "<<ot.best_previous_weight<<" current_best = "<<ot.best_weight_in_period<<endl;
+	//cout<<"Called get_deviation with "<<entry->range<<" variance: "<<entry->variance<<" log_delta: "<<ot.derived_delta<<" "<<ot.alpha_mult<<endl;
 	set_outset(ot, entry);
 	ot.best_previous_weight = FLT_MAX;
 	return true;
@@ -373,7 +382,7 @@ namespace ONLINE_TREE {
     if (ec.example_counter == ot.next)
       {
 	ot.next = ot.next + ot.base_period * pow(ot.next / ot.base_period, ot.period_power);
-
+	
 	ot.best_previous_score = ot.best_score_in_period;
 	ot.best_previous_weight = ot.best_weight_in_period;
 
