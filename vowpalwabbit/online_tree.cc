@@ -66,6 +66,7 @@ namespace ONLINE_TREE {
 
   void allreduce_fstats(online_tree& ot) {
     vw& all = *ot.all;
+    //cerr<<"In allreduce_fstats\n";
     for(uint32_t i = 0;i < all.length(); i++) {
 	ot.per_feature[i].variance -= ot.prev_variance[i];
 	ot.per_feature[i].value -= ot.prev_value[i];
@@ -511,6 +512,8 @@ namespace ONLINE_TREE {
       data->period_power = 0.;
 
     data->per_feature = (feature_stats*)calloc(all.length(), sizeof(feature_stats));
+    data->prev_variance = (float*)calloc(all.length(), sizeof(float));
+    data->prev_value = (float*) calloc(all.length(), sizeof(float));
 
     data->best_previous_score = FLT_MAX;
     data->best_previous_weight = FLT_MAX;
@@ -523,6 +526,8 @@ namespace ONLINE_TREE {
       data->per_feature[i].range = 0.;
       data->per_feature[i].variance = 0.;
       data->per_feature[i].delta = 0.;      
+      data->prev_variance[i] = 0.;
+      data->prev_value[i] = 0.;
     }
 
     data->all = &all;
@@ -532,7 +537,7 @@ namespace ONLINE_TREE {
     l->set_save_load<online_tree,save_load>();
     l->set_finish<online_tree,finish>();
     l->set_finish_example<online_tree,finish_online_tree_example>();
-	l->set_end_pass<online_tree, allreduce_fstats>();
+    l->set_end_pass<online_tree, allreduce_fstats>();
     return l;
   }
 }
