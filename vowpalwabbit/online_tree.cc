@@ -4,6 +4,7 @@
 #include "simple_label.h"
 #include "gd.h"
 #include "rand48.h"
+#include "accumulate.h"
 
 using namespace std;
 using namespace LEARNER;
@@ -459,6 +460,7 @@ namespace ONLINE_TREE {
 	}
   }
 
+
   learner* setup(vw& all, std::vector<std::string>&opts, po::variables_map& vm, po::variables_map& vm_file)
   {
     online_tree* data = (online_tree*)calloc(1,sizeof(online_tree));
@@ -521,7 +523,7 @@ namespace ONLINE_TREE {
     l->set_save_load<online_tree,save_load>();
     l->set_finish<online_tree,finish>();
     l->set_finish_example<online_tree,finish_online_tree_example>();
-
+	l->set_end_pass<online_tree, allreduce_fstats>();
     return l;
   }
 }

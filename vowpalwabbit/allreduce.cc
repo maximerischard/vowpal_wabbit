@@ -67,7 +67,7 @@ socket_t sock_connect(const uint32_t ip, const int port) {
       cerr << ':' << ntohs(port) << endl;
       perror(NULL);
       count++;
-      sleep(1);
+      //sleep(1);
     }
   if (ret == -1)
     throw exception();
