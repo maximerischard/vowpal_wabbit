@@ -835,8 +835,14 @@ vw* parse_args(int argc, char *argv[])
     all->audit = true;
   }
 
+
   if (vm.count("sendto"))
     all->l = SENDER::setup(*all, vm, all->pairs);
+
+  if (vm.count("online_tree") || vm_file.count("online_tree")) {
+    all->l = ONLINE_TREE::setup(*all, to_pass_further, vm, vm_file);
+  }
+
 
   // Need to see if we have to load feature mask first or second.
   // -i and -mask are from same file, load -i file first so mask can use it
@@ -862,9 +868,6 @@ vw* parse_args(int argc, char *argv[])
   bool got_cs = false;
   bool got_cb = false;
 
-  if (vm.count("online_tree") || vm_file.count("online_tree")) {
-    all->l = ONLINE_TREE::setup(*all, to_pass_further, vm, vm_file);
-  }
 
   if(vm.count("nn") || vm_file.count("nn") )
     all->l = NN::setup(*all, to_pass_further, vm, vm_file);

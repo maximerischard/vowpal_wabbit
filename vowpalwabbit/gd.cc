@@ -643,6 +643,7 @@ void sync_weights(vw& all) {
 
 void save_load_regressor(vw& all, io_buf& model_file, bool read, bool text)
 {
+  cerr<<"Starting save_load_regressor\n";
   uint32_t length = 1 << all.num_bits;
   uint32_t stride = 1 << all.reg.stride_shift;
   int c = 0;
@@ -708,6 +709,7 @@ void save_load_regressor(vw& all, io_buf& model_file, bool read, bool text)
 	i++;
     }
   while ((!read && i < length) || (read && brw >0));  
+    cerr<<"Done with save_load_regressor\n";
 }
 
 void save_load_online_state(vw& all, io_buf& model_file, bool read, bool text)

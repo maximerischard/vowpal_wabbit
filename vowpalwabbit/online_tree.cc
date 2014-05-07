@@ -66,6 +66,10 @@ namespace ONLINE_TREE {
 
   void allreduce_fstats(online_tree& ot) {
     vw& all = *ot.all;
+
+    if(all.span_server == "") 
+      return;
+
     //cerr<<"In allreduce_fstats\n";
     for(uint32_t i = 0;i < all.length(); i++) {
 	ot.per_feature[i].variance -= ot.prev_variance[i];
@@ -112,7 +116,6 @@ namespace ONLINE_TREE {
   
   bool inset(online_tree& ot, feature f, float log_delta)
   {    
-
     feature_stats* entry = get_entry(ot,f.weight_index);
 
     if (log_delta <= entry->delta)
@@ -155,6 +158,9 @@ namespace ONLINE_TREE {
   
   void update_regret(online_tree &ot, feature f, float base_loss, float feature_loss)
   {
+    if(!ot.all->training)
+      return;
+
     feature_stats* entry = get_entry(ot,f.weight_index);
     float diff = base_loss - feature_loss;
 
@@ -262,7 +268,8 @@ namespace ONLINE_TREE {
 	//cout<<"Putting in outset "<<ot.synthetic.example_counter<<" w_val: "<<w_val<<" deviation: "<<deviation<<" prev_weight= "<<ot.best_previous_weight<<" current_best = "<<ot.best_weight_in_period<<endl;
 	//cout<<"Called get_deviation with "<<entry->range<<" variance: "<<entry->variance<<" log_delta: "<<ot.derived_delta<<" "<<ot.alpha_mult<<endl;
 	set_outset(ot, entry);
-	ot.best_previous_weight = FLT_MAX;
+	//if(ot.out_set.size() > ot.all->length())
+	  ot.best_previous_weight = FLT_MAX;
 	return true;
       }
       else
@@ -459,20 +466,30 @@ namespace ONLINE_TREE {
   
   void save_load(online_tree& ot, io_buf& model_file, bool read, bool text)
   {
-    if (model_file.files.size() > 0)
+    cerr<<"save_load "<<endl;
+    fflush(stderr);
+    if (model_file.files.size() > 0) {
+      size_t len = 0;
       for (size_t i = 0; i < ot.all->length(); i++)
 	{ 
-	  char buff[512];
-	  uint32_t text_len = sprintf(buff, " parent: %ui residual_range: %f residual_variance: %f residual_regret: %f delta: %f\n", ot.per_feature[i].parent, ot.per_feature[i].range, ot.per_feature[i].variance, ot.per_feature[i].value, ot.per_feature[i].delta);
-	  bin_text_read_write_fixed(model_file, (char*)&ot.per_feature[i], sizeof(feature_stats),
-				    "", read,
-				    buff, text_len, text);
+	  // char buff[512];
+	  // uint32_t text_len = sprintf(buff, " parent: %ui residual_range: %f residual_variance: %f residual_regret: %f delta: %f\n", ot.per_feature[i].parent, ot.per_feature[i].range, ot.per_feature[i].variance, ot.per_feature[i].value, ot.per_feature[i].delta);
+	  
+	  len += bin_text_read_write_fixed(model_file, (char*)&ot.per_feature[i].parent, sizeof(ot.per_feature[i].parent),   "", read, "", 0, text);
+	  len += bin_text_read_write_fixed(model_file, (char*)&ot.per_feature[i].range, sizeof(ot.per_feature[i].range),   "", read, "", 0, text);
+	  len += bin_text_read_write_fixed(model_file, (char*)&ot.per_feature[i].variance, sizeof(ot.per_feature[i].variance),   "", read, "", 0, text);
+	  len += bin_text_read_write_fixed(model_file, (char*)&ot.per_feature[i].value, sizeof(ot.per_feature[i].value),   "", read, "", 0, text);
+	  len += bin_text_read_write_fixed(model_file, (char*)&ot.per_feature[i].delta, sizeof(ot.per_feature[i].delta),   "", read, "", 0, text);
 	}
+      cerr<<"Total r/w = "<<len<<endl;
+    }
   }
 
 
   learner* setup(vw& all, std::vector<std::string>&opts, po::variables_map& vm, po::variables_map& vm_file)
   {
+    cerr<<"Starting setup\n";
+    fflush(stderr);
     online_tree* data = (online_tree*)calloc(1,sizeof(online_tree));
 
     po::options_description desc("Online Tree options");
@@ -538,6 +555,8 @@ namespace ONLINE_TREE {
     l->set_finish<online_tree,finish>();
     l->set_finish_example<online_tree,finish_online_tree_example>();
     l->set_end_pass<online_tree, allreduce_fstats>();
+    cerr<<"Done with setup\n";
+    fflush(stderr);
     return l;
   }
 }

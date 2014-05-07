@@ -56,7 +56,7 @@ const size_t buf_size = 512;
 
 void save_load_header(vw& all, io_buf& model_file, bool read, bool text)
 {
-
+  cout<<"starting save load header\n";
   char buff[buf_size];
   char buff2[buf_size];
   uint32_t text_len;
@@ -236,6 +236,7 @@ void save_load_header(vw& all, io_buf& model_file, bool read, bool text)
       if (read)
 	all.options_from_file.assign(buff2);
     }
+  cout<<"done save load header\n";
 }
 
 void dump_regressor(vw& all, string reg_name, bool as_text)
