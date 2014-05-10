@@ -189,7 +189,7 @@ namespace ONLINE_TREE {
     uint32_t my_index;
     if (index == ot.f.weight_index) {
       uint64_t z = ot.f.weight_index;
-      my_index =  (((size_t)(merand48(z) * ot.all->reg.weight_mask) << ot.all->reg.stride_shift) &
+      my_index =  (((size_t)(merand48(z)) << ot.all->reg.stride_shift) &
 	      ot.all->reg.weight_mask);
     }
     else {
