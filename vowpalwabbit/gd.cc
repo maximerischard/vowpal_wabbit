@@ -465,6 +465,7 @@ inline void simple_norm_compute(norm_data& nd, float x, float& fw)
     t = InvSqrt(w[1]) * inv_norm;
 #endif
     } else {
+      // cout << "Not in adaptive" << endl;
       t *= inv_norm2; //if only using normalized but not adaptive, we're dividing update by feature norm squared
     }
     nd.norm += x2 * t;
@@ -512,8 +513,12 @@ float compute_norm(vw& all, example& ec)
     all.normalized_sum_norm_x += ld->weight * nd.norm_x;
 
     float avg_sq_norm = all.normalized_sum_norm_x / total_weight;
+    // cout << "all.normalized_sum_norm " << all.normalized_sum_norm_x << endl;
     if(all.power_t == 0.5) {
-      if(all.adaptive) nd.norm /= sqrt(avg_sq_norm);
+      if(all.adaptive) { 
+        // cout << "Here, avg_sq_norm " << avg_sq_norm << endl;
+	nd.norm /= sqrt(avg_sq_norm);
+      }
       else nd.norm /= avg_sq_norm;
     } else {
       float power_t_norm = 1.f - (all.adaptive ? all.power_t : 0.f);
@@ -640,6 +645,7 @@ void sync_weights(vw& all) {
 
 void save_load_regressor(vw& all, io_buf& model_file, bool read, bool text)
 {
+  cerr<<"Starting save_load_regressor\n";
   uint32_t length = 1 << all.num_bits;
   uint32_t stride = 1 << all.reg.stride_shift;
   int c = 0;
@@ -705,6 +711,7 @@ void save_load_regressor(vw& all, io_buf& model_file, bool read, bool text)
 	i++;
     }
   while ((!read && i < length) || (read && brw >0));  
+    cerr<<"Done with save_load_regressor\n";
 }
 
 void save_load_online_state(vw& all, io_buf& model_file, bool read, bool text)

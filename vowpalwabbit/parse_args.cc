@@ -33,6 +33,7 @@ license as described in the file LICENSE.
 #include "noop.h"
 #include "print.h"
 #include "gd_mf.h"
+#include "online_tree.h"
 #include "mf.h"
 #include "vw.h"
 #include "rand48.h"
@@ -620,6 +621,7 @@ void parse_base_algorithm(vw& all, po::variables_map& vm)
 
 void load_input_model(vw& all, po::variables_map& vm, io_buf& io_temp)
 {
+
   // Need to see if we have to load feature mask first or second.
   // -i and -mask are from same file, load -i file first so mask can use it
   if (vm.count("feature_mask") && vm.count("initial_regressor")
@@ -641,6 +643,7 @@ void load_input_model(vw& all, po::variables_map& vm, io_buf& io_temp)
   }
 }
 
+
 void parse_scorer_reductions(vw& all, po::variables_map& vm)
 {
   po::options_description score_mod_opt("Score modifying options (can be combined)");
@@ -650,8 +653,9 @@ void parse_scorer_reductions(vw& all, po::variables_map& vm)
     ("new_mf", "use new, reduction-based matrix factorization")
     ("autolink", po::value<size_t>(), "create link function with polynomial d")
     ("lrq", po::value<vector<string> > (), "use low rank quadratic features")
-    ("lrqdropout", "use dropout training for low rank quadratic features");
-
+    ("lrqdropout", "use dropout training for low rank quadratic features")
+    ("online_tree", po::value<float>(), "create an online decision forest");
+  
   vm = add_options(all, score_mod_opt);
 
   if(vm.count("nn"))
@@ -665,8 +669,11 @@ void parse_scorer_reductions(vw& all, po::variables_map& vm)
   
   if (vm.count("lrq"))
     all.l = LRQ::setup(all, vm);
-  
+
   all.l = Scorer::setup(all, vm);
+
+  if (vm.count("online_tree"))
+    all.l = ONLINE_TREE::setup(all, vm);
 }
 
 LEARNER::learner* exclusive_setup(vw& all, po::variables_map& vm, bool& score_consumer, LEARNER::learner* (*setup)(vw&, po::variables_map&))
@@ -939,8 +946,6 @@ vw* parse_args(int argc, char *argv[])
   
   parse_output_preds(*all, vm);
 
-  load_input_model(*all, vm, io_temp);
-
   parse_scorer_reductions(*all, vm);
 
   bool got_cs = false;
@@ -955,6 +960,8 @@ vw* parse_args(int argc, char *argv[])
 
   if(vm.count("bootstrap"))
     all->l = BS::setup(*all, vm);
+
+  load_input_model(*all, vm, io_temp);
 
   // Be friendly: if -d was left out, treat positional param as data file
   po::positional_options_description p;  

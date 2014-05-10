@@ -264,7 +264,7 @@ vw::vw()
   lda_epsilon = 0.001f;
   minibatch = 1;
   span_server = "";
-  m = 15;
+  m = 15; 
   save_resume = false;
 
   set_minmax = set_mm;

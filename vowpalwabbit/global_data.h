@@ -226,6 +226,8 @@ struct vw {
   float lda_D;
   float lda_epsilon;
 
+  //bool debug_34645_flag;
+
   std::string text_regressor_name;
   std::string inv_hash_regressor_name;
 

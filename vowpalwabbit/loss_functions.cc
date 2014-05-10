@@ -38,6 +38,11 @@ public:
 	return float((sd->max_label - label) * (sd->max_label - label) 
 	  + 2. * (sd->max_label - label) * (prediction - sd->max_label));
   }
+
+  float classicUpdate(float prediction, float label,float eta_t, float norm)
+  {
+    return eta_t*(label - prediction)/norm;
+  }
   
   float getUpdate(float prediction, float label,float eta_t, float norm) {
 
