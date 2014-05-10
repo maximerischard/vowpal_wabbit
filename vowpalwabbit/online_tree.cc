@@ -184,9 +184,17 @@ namespace ONLINE_TREE {
     return entry->parent & 2;
   }
 
-  inline uint32_t get_weight_index(online_tree& ot, float& w) {
-    uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
+  inline bool constant_feature(const regressor& reg, uint32_t index)
+  {
+    return (index & reg.weight_mask) == ((constant << reg.stride_shift) & reg.weight_mask);
+  }
+  
+  inline uint32_t get_weight_index(online_tree& ot, uint32_t index) {
     uint32_t my_index;
+    
+    if (constant_feature(ot.all->reg,index))
+      return constant << ot.all->reg.stride_shift;
+
     if (index == ot.f.weight_index) {
       uint64_t z = ot.f.weight_index;
       my_index =  (((size_t)(merand48(z)) << ot.all->reg.stride_shift) &
@@ -204,13 +212,16 @@ namespace ONLINE_TREE {
   template <bool predict_only>
   void create_outset_feature(online_tree& ot, float v, float& w) {
     	  feature n;
+	  uint32_t index = (uint32_t)(&w - ot.all->reg.weight_vector);
+	  if (constant_feature(ot.all->reg, index)) return;
+
+	  n.weight_index = get_weight_index(ot, index);
           n.x = v * ot.f.x;
-	  n.weight_index = get_weight_index(ot, w);
-	  
+
 	  feature_stats* entry = get_entry(ot, n.weight_index);
 	  
           if (used_feature(entry) || n.x == 0.0) return;
-
+	  
           set_cycle(entry);
 
 	  //check in_set here
@@ -270,7 +281,7 @@ namespace ONLINE_TREE {
     float w_val = ot.all->reg.weight_vector[f.weight_index & ot.all->reg.weight_mask];
     
     //check out_set bit here.
-    if(outset<predict_only>(ot, entry, w_val)) {
+    if(outset<predict_only>(ot, entry, w_val) && !constant_feature(ot.all->reg, f.weight_index)) {
       ot.current_depth++;
       if (ot.current_depth > ot.max_depth)
 	ot.max_depth = ot.current_depth;
