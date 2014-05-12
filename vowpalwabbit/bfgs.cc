@@ -810,7 +810,6 @@ void end_pass(bfgs& b)
            preconditioner_to_regularizer(*all, b, (*all).l2_lambda);
         b.current_pass ++;
       }   
-                
   }
 }
 

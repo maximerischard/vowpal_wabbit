@@ -638,9 +638,13 @@ bool parser_done(parser* p)
 void set_done(vw& all)
 {
   all.early_terminate = true;
-  mutex_lock(&all.p->examples_lock);
+  mutex_lock(&all.p->examples_lock);//shut off further parsing
   all.p->done = true;
   mutex_unlock(&all.p->examples_lock);
+
+  //drain the example queue
+  while (all.p->used_index != all.p->parsed_examples)
+    VW::finish_example(all, VW::get_example(all.p));
 }
 
 void addgrams(vw& all, size_t ngram, size_t skip_gram, v_array<feature>& atomics, v_array<audit_data>& audits,
