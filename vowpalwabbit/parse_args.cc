@@ -219,11 +219,11 @@ void parse_source(vw& all, po::variables_map& vm)
       set_compressed(all.p);
 
   if (vm.count("data")) {
-    all.data_filename = vm["data"].as<string>();
-    if (ends_with(all.data_filename, ".gz"))
+    all.data_filename = vm["data"].as<vector<string> >();
+    if (ends_with(all.data_filename[0], ".gz"))
       set_compressed(all.p);
   } else
-    all.data_filename = "";
+    all.data_filename =  vector<std::string>();
 
   if(!all.holdout_set_off && (vm.count("output_feature_regularizer_binary") || vm.count("output_feature_regularizer_text")))
     {

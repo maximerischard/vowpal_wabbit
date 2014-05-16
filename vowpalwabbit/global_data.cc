@@ -249,7 +249,7 @@ vw::vw()
   reg_mode = 0;
   current_pass = 0;
 
-  data_filename = "";
+  data_filename = vector<std::string>();
 
   bfgs = false;
   hessian_on = false;

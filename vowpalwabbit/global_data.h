@@ -143,7 +143,7 @@ struct vw {
   uint32_t num_bits; // log_2 of the number of features.
   bool default_bits;
 
-  string data_filename; // was vm["data"]
+  vector<std::string> data_filename; // was vm["data"]
 
   bool daemon;
   size_t num_children;

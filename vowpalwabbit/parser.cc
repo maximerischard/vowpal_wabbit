@@ -341,14 +341,17 @@ void make_write_cache(vw& all, string &newname, bool quiet)
     cerr << "creating cache_file = " << newname << endl;
 }
 
-void parse_cache(vw& all, po::variables_map &vm, string source,
+void parse_cache(vw& all, po::variables_map &vm, vector<std::string> sources,
 		 bool quiet)
 {
   vector<string> caches;
   if (vm.count("cache_file"))
     caches = vm["cache_file"].as< vector<string> >();
-  if (vm.count("cache"))
-    caches.push_back(source+string(".cache"));
+  if (vm.count("cache")) {
+	for (size_t i = 0; i < sources.size(); i++){
+	    caches.push_back(sources[i]+string(".cache"));
+	}
+}
 
   all.p->write_cache = false;
 
@@ -599,14 +602,16 @@ void enable_sources(vw& all, po::variables_map& vm, bool quiet, size_t passes)
 	}
       else
 	{
-	  string temp = all.data_filename;
-	  if (!quiet)
-	    cerr << "Reading datafile = " << temp << endl;
-	  int f = all.p->input->open_file(temp.c_str(), all.stdin_off, io_buf::READ);
-	  if (f == -1 && temp.size() != 0)
-	    {
-			cerr << "can't open '" << temp << "', sailing on!" << endl;
-	    }
+	  for (size_t i=0; i<all.data_filename.size();i++){
+	  	  string temp = all.data_filename[i];
+		  if (!quiet)
+		    cerr << "Reading datafile = " << temp << endl;
+		  int f = all.p->input->open_file(temp.c_str(), all.stdin_off, io_buf::READ);
+		  if (f == -1 && temp.size() != 0)
+		    {
+				cerr << "can't open '" << temp << "', sailing on!" << endl;
+		    }
+	  }
 	  all.p->reader = read_features;
 	  all.p->resettable = all.p->write_cache;
 	}
